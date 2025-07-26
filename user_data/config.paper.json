@@ -145,15 +145,58 @@
 
   "discord": {
     "enabled": true,
-    "webhook_url": "${DISCORD_WEBHOOK_URL}",
-    "entry": "on",
-    "entry_fill": "on", 
-    "exit": "on",
-    "exit_fill": "on",
-    "status": "on",
-    "startup": "on",
-    "buy_tag": "on",
-    "sell_reason": "on"
+    "webhook_url": "https://discord.com/api/webhooks/1398566969795416064/mjEtq_BoHhIys1TIEdy7IWuGfl-YMyxIbZNztf65MTJQgAytF-FfTEWdKBey7MetlTpq",
+    "entry": [
+      {"Trade ID": "{trade_id}"},
+      {"Exchange": "{exchange}"},
+      {"Pair": "{pair}"},
+      {"Direction": "{direction}"},
+      {"Amount": "{amount}"},
+      {"Open Rate": "{open_rate}"},
+      {"Strategy": "{strategy}"},
+      {"Timeframe": "{timeframe}"}
+    ],
+    "entry_fill": [
+      {"Trade ID": "{trade_id}"},
+      {"Exchange": "{exchange}"},
+      {"Pair": "{pair}"},
+      {"Direction": "{direction}"},
+      {"Open Rate": "{open_rate}"},
+      {"Amount": "{amount}"},
+      {"Strategy": "{strategy}"}
+    ],
+    "exit": [
+      {"Trade ID": "{trade_id}"},
+      {"Exchange": "{exchange}"},
+      {"Pair": "{pair}"},
+      {"Direction": "{direction}"},
+      {"Amount": "{amount}"},
+      {"Close Rate": "{close_rate}"},
+      {"Strategy": "{strategy}"}
+    ],
+    "exit_fill": [
+      {"Trade ID": "{trade_id}"},
+      {"Exchange": "{exchange}"},
+      {"Pair": "{pair}"},
+      {"Direction": "{direction}"},
+      {"Open Rate": "{open_rate}"},
+      {"Close Rate": "{close_rate}"},
+      {"Amount": "{amount}"},
+      {"Profit": "{profit_amount} {stake_currency}"},
+      {"Profitability": "{profit_ratio:.2%}"},
+      {"Strategy": "{strategy}"}
+    ],
+    "status": [
+      {"Status": "{status}"},
+      {"Strategy": "{strategy}"},
+      {"Bot": "{bot_name}"}
+    ],
+    "startup": [
+      {"Bot Name": "{bot_name}"},
+      {"Strategy": "{strategy}"},
+      {"Timeframe": "{timeframe}"},
+      {"Status": "Bot Started Successfully"}
+    ]
   },
 
   "api_server": {
