@@ -1,344 +1,487 @@
-# Freqtrade Crypto Trading Bot
+# Freqtrade Crypto Bot - DonchianATRTrend Strategy
 
-A professional cryptocurrency trading bot built with Freqtrade, featuring the **DonchianATRTrend** strategy - a robust trend-following system based on Donchian channels with ATR-based risk management.
+A professional-grade cryptocurrency trading bot using Freqtrade with a robust trend-following breakout strategy. Features Donchian channel breakouts, ATR-based position sizing, comprehensive risk management, and Monte Carlo analysis tools.
 
 ## 🚀 Quick Start
 
-### 1. Environment Setup
 ```bash
-# Copy environment template and fill in your API keys
+# 1. Copy environment template and add your API keys
 cp .env.example .env
-# Edit .env with your exchange API credentials
+# Edit .env with your Coinbase API credentials
 
-# Install dependencies (auto-detects Poetry or falls back to pip)
+# 2. Install dependencies
 make setup
 
-# Download historical data
+# 3. Download historical data
 make data
 
-# Run backtest
+# 4. Run backtest
 make backtest
 
-# Start paper trading
+# 5. Start paper trading
 make trade-paper
 ```
 
-### 2. API Key Setup (.env file)
+## 📋 Prerequisites
+
+### Required Software
+- **Python 3.11+** - [Download Python](https://www.python.org/downloads/)
+- **TA-Lib** - Technical analysis library
+
+### TA-Lib Installation
+
+**Windows:**
 ```bash
-# Coinbase Pro API credentials
-CB_KEY=your_coinbase_pro_api_key_here
-CB_SECRET=your_coinbase_pro_api_secret_here
-CB_PASSPHRASE=your_coinbase_pro_passphrase_here
+# Option 1: Binary wheel (recommended)
+pip install TA-Lib-bin
 
-# Risk management
-RISK_UNIT_USD=5.0
-MAX_DAILY_LOSS_R=2.0
+# Option 2: From Christoph Gohlke's wheels
+# Download appropriate .whl from https://www.lfd.uci.edu/~gohlke/pythonlibs/#ta-lib
+pip install TA_Lib-0.4.25-cp311-cp311-win_amd64.whl
 ```
 
-## 📊 Strategy: DonchianATRTrend
-
-### Core Logic
-- **Trend Following**: Donchian channel breakouts with EMA trend filter
-- **Risk Management**: ATR-based position sizing and stop losses
-- **Risk Unit**: Fixed $5 risk per trade (configurable)
-- **Daily Loss Lock**: Trading stops after losing 2R in a day
-
-### Entry Conditions
-- Price breaks above 20-period Donchian upper band
-- Price is above 200-period EMA (trend filter)
-- Volume confirmation
-- Minimum volatility threshold (0.5% ATR)
-
-### Exit Conditions
-- Price closes below Donchian mid-line (10-period)
-- ATR-based stop loss (1.5x ATR distance)
-- 3% ROI target (fallback)
-
-### Position Sizing
-```
-Position Size = Risk Unit / (ATR × Multiplier)
-Example: $5 / (1000 × 1.5) = $0.0033 per unit
-```
-
-### Hyperopt Parameters
-- `don_len_entry`: Entry Donchian period (10-60, default 20)
-- `don_len_exit`: Exit Donchian period (5-40, default 10)
-- `ema_trend`: EMA trend filter period (100-300, default 200)
-- `atr_mult`: ATR stop multiplier (1.0-3.0, default 1.5)
-
-## 🛠️ Available Commands
-
-### Core Operations
+**Linux/macOS:**
 ```bash
-make setup          # Install dependencies
-make data           # Download historical data
-make backtest       # Run strategy backtest
-make hyperopt       # Optimize parameters
-make trade-paper    # Start paper trading
-make trade-live     # Start live trading (careful!)
-make export         # Export trades with R-multiples
-make mc             # Run Monte Carlo analysis
-make test           # Run unit tests
+# Install system dependencies first
+sudo apt-get install build-essential  # Ubuntu/Debian
+brew install ta-lib                    # macOS
+
+# Then install Python package
+pip install TA-Lib
 ```
 
-### Analysis & Monitoring
-```bash
-make plot-dataframe # Plot strategy indicators
-make plot-profit    # Plot P&L charts
-make show-trades    # Show trade analysis
-make logs           # Monitor live logs
-```
+### API Setup
 
-## 📁 Project Structure
+1. **Coinbase Advanced** (recommended for lower fees):
+   - Create account at [Coinbase Advanced](https://advanced-trade.coinbase.com/)
+   - Generate API key with trading permissions
+   - Note: Different from regular Coinbase Pro
+
+2. **Alternative Exchanges:**
+   - Binance, Kraken, etc. supported via CCXT
+   - Update exchange config in JSON files
+
+## 🏗️ Project Structure
 
 ```
 freqtrade-crypto-1.0/
 ├── user_data/
 │   ├── strategies/
-│   │   └── donchian_atr.py      # Main strategy
-│   ├── logs/                    # Bot logs
-│   └── data/                    # Historical data
+│   │   └── donchian_atr.py      # Main trading strategy
+│   ├── config.paper.json        # Paper trading config
+│   ├── config.live.json         # Live trading config
+│   └── protections.json         # Risk protection rules
 ├── scripts/
 │   ├── download_data.py         # Data download utility
-│   ├── export_trades.py         # Trade export with R-multiples
-│   └── mc_bootstrap.py          # Monte Carlo analysis
+│   ├── export_trades.py         # Trade analysis & export
+│   └── mc_bootstrap.py          # Monte Carlo simulation
 ├── tests/
 │   └── test_indicators.py       # Unit tests
-├── reports/                     # Analysis outputs
-├── config.paper.json           # Paper trading config
-├── config.live.json            # Live trading config
+├── reports/                     # Generated analysis files
 ├── .env.example                 # Environment template
-├── pyproject.toml              # Poetry dependencies
-├── requirements.txt            # Pip dependencies
-├── Makefile                    # Automation commands
-└── README.md                   # This file
+├── requirements.txt             # Python dependencies
+├── Makefile                     # Common commands
+└── README.md                    # This file
 ```
 
-## 💰 Risk Management
+## 📊 Strategy Overview
 
-### Risk Unit System
-- **R**: Fixed risk amount per trade ($5 default)
-- **Position sizing**: Calculated using ATR volatility
-- **R-multiples**: Track performance (1R = $5 profit/loss)
+### DonchianATRTrend Strategy
 
-### Daily Loss Protection
-- Trading stops after losing 2R in a single day
-- Resets automatically at start of new trading day
-- Configurable via `MAX_DAILY_LOSS_R` environment variable
+**Core Logic:**
+- **Entry**: Price breaks above Donchian upper channel (20-period) + trending above EMA(200)
+- **Exit**: Price drops below Donchian mid-line (10-period) OR RSI overbought OR MACD bearish cross
+- **Stop Loss**: Dynamic ATR-based stops (1.5x ATR distance)
+- **Position Sizing**: R-based sizing where R = $5 risk per trade
 
-### Monte Carlo Analysis
+**Technical Indicators:**
+- Donchian Channels (20 entry, 10 exit)
+- EMA(200) trend filter
+- ATR(14) for volatility measurement
+- RSI(14) momentum
+- MACD trend confirmation
+- Volume confirmation
+
+**Risk Management:**
+- Maximum 2 open positions
+- R-multiple based position sizing
+- ATR trailing stops
+- Multiple protection layers (StoplossGuard, MaxDrawdown, CooldownPeriod)
+- Daily loss limits
+
+## 🛠️ Configuration
+
+### Environment Variables (.env)
+
 ```bash
-# Export trades and run Monte Carlo simulation
-make mc
+# Coinbase API (required)
+CB_KEY=your_api_key_here
+CB_SECRET=your_secret_here
+CB_PASSPHRASE=your_passphrase_here
 
-# Generates:
-# - reports/monte_carlo_analysis.png
-# - reports/monte_carlo_stats.txt
-# - reports/monte_carlo_results.csv
+# Risk Management
+RISK_UNIT_USD=5.0              # Risk per trade in USD
+MAX_DAILY_LOSS_R=2.0           # Max daily loss in R units
 ```
 
-## 📈 Usage Examples
+### Trading Pairs
 
-### Backtesting Different Timeframes
+Default pairs (configurable in config files):
+- BTC/USD
+- ETH/USD  
+- SOL/USD
+- MATIC/USD
+- AVAX/USD
+
+### Key Parameters
+
+**Strategy Parameters:**
+- `don_len_entry`: 20 (Donchian breakout period)
+- `don_len_exit`: 10 (Donchian exit period)
+- `ema_len`: 200 (Trend filter period)
+- `atr_mult`: 1.5 (Stop loss multiplier)
+
+**Risk Parameters:**
+- `r_usd`: $5 (Risk unit per trade)
+- `max_open_trades`: 2
+- `stake_amount`: "unlimited" (paper) / $25 (live)
+
+## ⚡ Commands Reference
+
+### Setup & Installation
 ```bash
-# 4-hour timeframe
-freqtrade backtesting --config config.paper.json --strategy DonchianATRTrend --timeframe 4h
-
-# Daily timeframe
-freqtrade backtesting --config config.paper.json --strategy DonchianATRTrend --timeframe 1d
+make setup          # Install dependencies
+make clean          # Clean temporary files
 ```
 
-### Custom Pair Lists
-Edit `config.paper.json` or `config.live.json`:
+### Data Management
+```bash
+make data           # Download 365 days of data
+make data-week      # Download 1 week (testing)
+make data-custom DAYS=30 PAIRS="BTC/USD ETH/USD"  # Custom download
+```
+
+### Testing & Validation
+```bash
+make test           # Run unit tests
+make backtest       # Full backtest
+make backtest-fast  # Quick 30-day backtest
+make validate       # Validate configuration
+```
+
+### Hyperoptimization
+```bash
+make hyperopt       # Full hyperopt (500 epochs)
+make hyperopt-quick # Quick hyperopt (100 epochs)
+make hyperopt-show  # Show results
+```
+
+### Trading
+```bash
+make trade-paper    # Start paper trading
+make trade-live     # Start live trading (careful!)
+make stop           # Stop all bots
+make status         # Check bot status
+make balance        # Check account balance
+```
+
+### Analysis & Reporting
+```bash
+make export         # Export trades to CSV
+make mc             # Monte Carlo analysis
+make plot-results   # Generate performance plots
+make logs           # Show recent logs
+```
+
+## 📈 Analysis Tools
+
+### 1. Trade Export & Analytics
+```bash
+python scripts/export_trades.py --config user_data/config.paper.json
+```
+
+**Features:**
+- R-multiple calculations
+- Win rate and profit metrics
+- Drawdown analysis
+- Duration statistics
+- Performance metrics export
+
+### 2. Monte Carlo Bootstrap
+```bash
+python scripts/mc_bootstrap.py --trades reports/trades_export.csv --simulations 5000
+```
+
+**Output:**
+- Expected return distributions
+- Maximum drawdown probabilities
+- Value at Risk (VaR) calculations
+- Risk metrics visualization
+- Equity curve projections
+
+**Key Metrics:**
+- Probability of drawdown > 3R, 5R, 10R
+- Expected shortfall (tail risk)
+- Distribution of returns
+- 95% confidence intervals
+
+### 3. Performance Visualization
+- Equity curve plots
+- Drawdown histograms  
+- Risk/return scatter plots
+- Monthly/weekly breakdowns
+
+## ⚠️ Risk Management
+
+### Built-in Protections
+
+1. **StoplossGuard**: Stops trading after 2 stop losses in 24 candles
+2. **MaxDrawdown**: Stops at 5% drawdown over 168 candles (1 week)
+3. **CooldownPeriod**: 6-candle cooldown between trades per pair
+4. **Position Limits**: Maximum 2 open positions
+
+### R-Based Position Sizing
+
+Position size calculated as:
+```
+Stake Amount = R_USD / (ATR × ATR_Multiplier × Current_Price)
+```
+
+Example: With R=$5, ATR=0.02, multiplier=1.5:
+- Stop distance = 0.02 × 1.5 = 0.03 (3%)
+- Position size = $5 / 0.03 = $166.67
+
+### Daily Loss Limits
+
+Bot automatically stops trading if daily losses exceed configured R limits.
+
+## 🔧 Customization
+
+### Modifying Strategy Parameters
+
+Edit `user_data/strategies/donchian_atr.py`:
+
+```python
+# Strategy parameters
+don_len_entry = 25      # Longer breakout period
+don_len_exit = 8        # Shorter exit period  
+ema_len = 150          # Faster trend filter
+atr_mult = 2.0         # Wider stops
+r_usd = 10.0           # Higher risk per trade
+```
+
+### Adding New Pairs
+
+Edit config files to add pairs:
 ```json
-"pair_whitelist": [
-    "BTC/USD",
-    "ETH/USD",
-    "ADA/USD",
-    "DOT/USD",
-    "LINK/USD"
-]
-```
-
-### Hyperparameter Optimization
-```bash
-# Optimize buy/sell parameters
-make hyperopt
-
-# Custom optimization
-freqtrade hyperopt \
-    --config config.paper.json \
-    --strategy DonchianATRTrend \
-    --spaces buy sell \
-    --epochs 500 \
-    --timerange 20230101-20240101
-```
-
-## 🔧 Advanced Configuration
-
-### Exchange Setup
-Currently configured for Coinbase Pro. To use other exchanges:
-
-1. Update configs (`config.paper.json`, `config.live.json`)
-2. Change exchange name and API key variables
-3. Update pair format (e.g., `BTC/USDT` for Binance)
-
-### Custom Risk Settings
-```bash
-# Change risk unit
-export RISK_UNIT_USD=10.0
-
-# Change daily loss limit
-export MAX_DAILY_LOSS_R=3.0
-```
-
-### Telegram Notifications
-Add to `.env`:
-```bash
-TELEGRAM_TOKEN=your_bot_token
-TELEGRAM_CHAT_ID=your_chat_id
-```
-
-Enable in config files:
-```json
-"telegram": {
-    "enabled": true,
-    "token": "${TELEGRAM_TOKEN}",
-    "chat_id": "${TELEGRAM_CHAT_ID}"
+{
+  "exchange": {
+    "pair_whitelist": [
+      "BTC/USD",
+      "ETH/USD", 
+      "ADA/USD",    // Add new pairs here
+      "DOT/USD"
+    ]
+  }
 }
 ```
 
-## 🧪 Testing
+### Hyperopt Optimization
 
-### Unit Tests
-```bash
-# Run all tests
-make test
+Strategy supports hyperoptimization of key parameters:
+- Donchian periods (entry/exit)
+- EMA trend filter length
+- ATR stop multiplier
 
-# Run specific test categories
-python -m pytest tests/test_indicators.py::TestDonchianIndicators -v
-python -m pytest tests/test_indicators.py::TestRiskManagement -v
-```
+## 📊 Web Interface
 
-### Strategy Validation
-```bash
-# Validate strategy syntax
-freqtrade test-pairlist --config config.paper.json --strategy DonchianATRTrend
+Paper trading includes web interface at `http://localhost:8080`:
+- **Username**: freqtrade
+- **Password**: freqtrade
 
-# Dry run validation
-freqtrade trade --config config.paper.json --strategy DonchianATRTrend --dry-run
-```
+**Features:**
+- Real-time trade monitoring
+- Performance charts
+- Balance tracking
+- Manual trade controls
+- Strategy metrics
 
-## 📊 Performance Analysis
-
-### Trade Export & Analysis
-```bash
-# Export trades with R-multiples
-make export
-
-# Analyze results
-python scripts/export_trades.py --help
-python scripts/mc_bootstrap.py --help
-```
-
-### Key Metrics
-- **Win Rate**: Percentage of profitable trades
-- **R-Expectancy**: Average R-multiple per trade
-- **Max Drawdown**: Largest peak-to-trough decline
-- **Sharpe Ratio**: Risk-adjusted returns
-
-## 🚀 Going Live
-
-### Pre-Flight Checklist
-1. ✅ Successful paper trading for at least 2 weeks
-2. ✅ Monte Carlo analysis shows acceptable risk
-3. ✅ API keys configured and tested
-4. ✅ Stake amounts set appropriately in `config.live.json`
-5. ✅ Monitoring and alerts configured
-
-### Live Trading
-```bash
-# Start live trading (will prompt for confirmation)
-make trade-live
-
-# Monitor in real-time
-make logs
-```
-
-## 🔒 Security Best Practices
-
-- Use API keys with minimal permissions (trade only, no withdrawals)
-- Enable IP whitelisting on exchange
-- Start with small stake amounts
-- Monitor positions regularly
-- Keep bot updated
-
-## 🛟 Troubleshooting
+## 🐛 Troubleshooting
 
 ### Common Issues
 
-**TA-Lib Installation (Windows)**
+**1. TA-Lib Installation Errors**
 ```bash
-# Download wheel from https://www.lfd.uci.edu/~gohlke/pythonlibs/#ta-lib
-pip install TA_Lib-0.4.28-cp311-cp311-win_amd64.whl
+# Windows: Use binary wheel
+pip uninstall TA-Lib
+pip install TA-Lib-bin
+
+# Linux: Install system dependencies
+sudo apt-get update
+sudo apt-get install build-essential
 ```
 
-**TA-Lib Installation (Linux)**
+**2. API Connection Issues**
+- Verify API keys in `.env` file
+- Check API permissions (trading enabled)
+- Ensure IP whitelist (if configured)
+- Test with paper trading first
+
+**3. No Entry Signals**
 ```bash
-sudo apt-get install ta-lib-dev
-pip install ta-lib
+# Check if data is available
+make data
+
+# Validate strategy
+make validate
+
+# Run quick backtest
+make backtest-fast
 ```
 
-**Data Download Issues**
-```bash
-# Verify exchange connection
-freqtrade test-pairlist --config config.paper.json
+**4. High Memory Usage**
+- Reduce data range for backtesting
+- Use fewer pairs for testing
+- Clear cache: `make clean`
 
-# Manual data download
-freqtrade download-data --exchange coinbasepro --pairs BTC/USD --timeframe 1h --days 30
+### Debug Mode
+
+Enable verbose logging:
+```bash
+# In config files, set:
+"verbosity": 3
+
+# Or use freqtrade directly:
+freqtrade trade --config user_data/config.paper.json --verbose
 ```
 
-**Strategy Errors**
-```bash
-# Check strategy syntax
-python -c "from user_data.strategies.donchian_atr import DonchianATRTrend; print('Strategy OK')"
+### Log Files
 
-# Validate indicators
-freqtrade backtesting --config config.paper.json --strategy DonchianATRTrend --timerange 20241201-20241202
+Check logs in:
+- `user_data/logs/freqtrade.log`
+- Recent logs: `make logs`
+
+## 🔒 Security Best Practices
+
+1. **API Keys**:
+   - Use API keys with minimal required permissions
+   - Restrict IP access if possible
+   - Never commit API keys to version control
+
+2. **Live Trading**:
+   - Start with small amounts
+   - Test thoroughly in paper mode
+   - Monitor closely initially
+   - Set up alerts/notifications
+
+3. **Risk Limits**:
+   - Never risk more than you can afford to lose
+   - Set strict daily/weekly loss limits
+   - Use position sizing appropriately
+
+## 📧 Notifications (Optional)
+
+### Telegram Integration
+```bash
+# Add to .env:
+TELEGRAM_TOKEN=your_bot_token
+TELEGRAM_CHAT_ID=your_chat_id
+
+# Add to config:
+"telegram": {
+  "enabled": true,
+  "token": "${TELEGRAM_TOKEN}",
+  "chat_id": "${TELEGRAM_CHAT_ID}"
+}
 ```
 
-## 📚 Additional Resources
+### Discord Webhooks
+```bash
+# Add to .env:
+DISCORD_WEBHOOK_URL=your_webhook_url
 
-- [Freqtrade Documentation](https://www.freqtrade.io/)
-- [Coinbase Pro API](https://docs.pro.coinbase.com/)
-- [TA-Lib Indicators](https://ta-lib.org/function.html)
-- [Risk Management Guide](https://www.freqtrade.io/en/stable/strategy-customization/#custom-stoploss)
+# Add to config:
+"discord": {
+  "enabled": true,
+  "webhook_url": "${DISCORD_WEBHOOK_URL}"
+}
+```
+
+## 🚀 Deployment
+
+### VPS Deployment
+
+1. **Server Setup**:
+```bash
+# Ubuntu/Debian
+sudo apt update
+sudo apt install python3 python3-pip build-essential
+```
+
+2. **Process Management**:
+```bash
+# Using screen
+screen -S freqtrade
+make trade-live
+# Ctrl+A, D to detach
+
+# Using systemd (recommended)
+sudo cp freqtrade.service /etc/systemd/system/
+sudo systemctl enable freqtrade
+sudo systemctl start freqtrade
+```
+
+3. **Monitoring**:
+```bash
+# Check status
+sudo systemctl status freqtrade
+
+# View logs
+journalctl -u freqtrade -f
+```
+
+## 📚 Further Learning
+
+### Freqtrade Documentation
+- [Official Docs](https://www.freqtrade.io/)
+- [Strategy Development](https://www.freqtrade.io/en/stable/strategy-customization/)
+- [Hyperopt Guide](https://www.freqtrade.io/en/stable/hyperopt/)
+
+### Trading Strategy Resources
+- [Donchian Channels](https://www.investopedia.com/terms/d/donchian-channels.asp)
+- [ATR Position Sizing](https://www.investopedia.com/articles/trading/08/average-true-range.asp)
+- [Risk Management](https://www.investopedia.com/articles/trading/09/risk-management.asp)
 
 ## 🤝 Contributing
 
 1. Fork the repository
-2. Create feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit changes (`git commit -m 'Add amazing feature'`)
-4. Push to branch (`git push origin feature/amazing-feature`)
-5. Open Pull Request
+2. Create feature branch: `git checkout -b feature/improvement`
+3. Make changes and test: `make test`
+4. Commit changes: `git commit -am 'Add improvement'`
+5. Push branch: `git push origin feature/improvement`
+6. Submit pull request
 
-## ⚠️ Disclaimer
+## ⚖️ License
 
-**This software is for educational purposes only. Trading cryptocurrencies involves substantial risk of loss and is not suitable for every investor. Past performance does not guarantee future results. Only trade with money you can afford to lose.**
+This project is for educational purposes. Use at your own risk. No warranty provided.
 
-## 📄 License
-
-This project is licensed under the MIT License - see the LICENSE file for details.
+**Disclaimer**: Cryptocurrency trading involves substantial risk. Past performance does not guarantee future results. Only trade with funds you can afford to lose.
 
 ---
 
-**Ready to deploy?** Run through the checklist:
+## 🏁 RUN CHECKLIST
 
-1. `cp .env.example .env && fill keys`
-2. `make setup`
-3. `make data` 
-4. `make backtest`
-5. `make trade-paper`
-6. Watch logs, then flip to live config
+1. ✅ `cp .env.example .env` - Fill in your API keys
+2. ✅ `make setup` - Install dependencies  
+3. ✅ `make data` - Download historical data
+4. ✅ `make backtest` - Run initial backtest
+5. ✅ `make trade-paper` - Start paper trading
+6. ✅ Watch trades in dry-run mode
+7. ✅ Optional: `make hyperopt` - Optimize parameters
+8. ✅ When confident: Switch to `config.live.json` with small capital
 
-Need Discord/Telegram notifications or VPS deployment help? Let me know! 🚀
+**🎯 Next Steps**: Ask me about Discord/Telegram notifications or VPS deployment when ready!
+
+---
+
+*Happy Trading! 📈*

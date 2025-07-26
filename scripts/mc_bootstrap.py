@@ -1,312 +1,407 @@
 #!/usr/bin/env python3
 """
-Monte Carlo bootstrap analysis of trading results.
+Monte Carlo Bootstrap Analysis for Freqtrade
 
-Analyzes the probability distribution of drawdowns and returns based on
-historical trade R-multiples.
+Performs Monte Carlo simulation on historical trade results to estimate
+future performance distributions, drawdown probabilities, and risk metrics.
 
 Usage:
-    python scripts/mc_bootstrap.py --input reports/trades.csv --simulations 10000
+    python scripts/mc_bootstrap.py --trades reports/trades_export.csv
+    python scripts/mc_bootstrap.py --trades reports/trades_export.csv --simulations 10000
 """
 
 import argparse
 import logging
-import os
-from typing import List, Tuple
+import sys
+from pathlib import Path
+from typing import Dict, List, Tuple
 
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+import seaborn as sns
 from scipy import stats
 
-logging.basicConfig(level=logging.INFO)
+# Set up logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s'
+)
 logger = logging.getLogger(__name__)
 
 
-def load_r_multiples(csv_file: str) -> List[float]:
-    """
-    Load R-multiples from exported trades CSV.
-    
-    Args:
-        csv_file: Path to trades CSV file
-        
-    Returns:
-        List of R-multiple values
-    """
+def load_trade_data(file_path: str) -> pd.DataFrame:
+    """Load trade data from CSV file."""
     try:
-        df = pd.read_csv(csv_file)
-        
-        if "r_multiple" not in df.columns:
-            raise ValueError("CSV file must contain 'r_multiple' column")
-            
-        r_multiples = df["r_multiple"].dropna().tolist()
-        
-        logger.info(f"Loaded {len(r_multiples)} R-multiples from {csv_file}")
-        logger.info(f"Mean R: {np.mean(r_multiples):.3f}")
-        logger.info(f"Std R: {np.std(r_multiples):.3f}")
-        
-        return r_multiples
-        
+        df = pd.read_csv(file_path)
+        logger.info(f"Loaded {len(df)} trades from {file_path}")
+        return df
     except Exception as e:
-        logger.error(f"Error loading R-multiples: {e}")
+        logger.error(f"Error loading trade data: {e}")
         raise
 
 
-def monte_carlo_simulation(
-    r_multiples: List[float],
-    num_simulations: int = 10000,
-    num_trades: int = None,
+def prepare_returns_data(df: pd.DataFrame) -> np.ndarray:
+    """
+    Prepare returns data for Monte Carlo simulation.
+    
+    Args:
+        df: DataFrame with trade data
+        
+    Returns:
+        Array of trade returns (R-multiples or profit percentages)
+    """
+    try:
+        # Filter to closed trades only
+        closed_trades = df[df['is_open'] == 0].copy()
+        
+        if len(closed_trades) == 0:
+            raise ValueError("No closed trades found")
+        
+        # Use R-multiples if available, otherwise profit percentages
+        if 'r_multiple' in closed_trades.columns:
+            returns = closed_trades['r_multiple'].dropna().values
+            logger.info(f"Using R-multiples for {len(returns)} trades")
+        else:
+            returns = closed_trades['close_profit'].dropna().values
+            logger.info(f"Using profit percentages for {len(returns)} trades")
+        
+        if len(returns) == 0:
+            raise ValueError("No valid returns data found")
+        
+        logger.info(f"Returns statistics:")
+        logger.info(f"  Mean: {np.mean(returns):.3f}")
+        logger.info(f"  Std: {np.std(returns):.3f}")
+        logger.info(f"  Min: {np.min(returns):.3f}")  
+        logger.info(f"  Max: {np.max(returns):.3f}")
+        
+        return returns
+        
+    except Exception as e:
+        logger.error(f"Error preparing returns data: {e}")
+        raise
+
+
+def run_monte_carlo_simulation(
+    returns: np.ndarray,
+    num_simulations: int = 5000,
+    num_trades_per_sim: int = None
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
     """
     Run Monte Carlo bootstrap simulation.
     
     Args:
-        r_multiples: Historical R-multiple values
+        returns: Array of historical trade returns
         num_simulations: Number of simulation runs
-        num_trades: Number of trades per simulation (default: len(r_multiples))
+        num_trades_per_sim: Number of trades per simulation (default: len(returns))
         
     Returns:
-        Tuple of (final_returns, max_drawdowns, win_rates)
+        Tuple of (final_returns, max_drawdowns, equity_curves)
     """
-    if num_trades is None:
-        num_trades = len(r_multiples)
+    try:
+        if num_trades_per_sim is None:
+            num_trades_per_sim = len(returns)
         
-    final_returns = []
-    max_drawdowns = []
-    win_rates = []
-    
-    logger.info(f"Running {num_simulations} simulations with {num_trades} trades each...")
-    
-    for i in range(num_simulations):
-        # Bootstrap sample from historical R-multiples
-        sampled_returns = np.random.choice(r_multiples, size=num_trades, replace=True)
+        logger.info(f"Running {num_simulations} simulations with {num_trades_per_sim} trades each")
         
-        # Calculate cumulative returns
-        cumulative_returns = np.cumsum(sampled_returns)
+        final_returns = np.zeros(num_simulations)
+        max_drawdowns = np.zeros(num_simulations)
+        equity_curves = np.zeros((num_simulations, num_trades_per_sim + 1))
         
-        # Calculate running maximum for drawdown
-        running_max = np.maximum.accumulate(cumulative_returns)
-        drawdowns = cumulative_returns - running_max
+        for i in range(num_simulations):
+            # Bootstrap sample from historical returns
+            sim_returns = np.random.choice(returns, size=num_trades_per_sim, replace=True)
+            
+            # Calculate cumulative equity curve
+            equity_curve = np.concatenate([[0], np.cumsum(sim_returns)])
+            equity_curves[i] = equity_curve
+            
+            # Final return
+            final_returns[i] = equity_curve[-1]
+            
+            # Calculate maximum drawdown
+            running_max = np.maximum.accumulate(equity_curve)
+            drawdown = equity_curve - running_max
+            max_drawdowns[i] = np.min(drawdown)
+            
+            if (i + 1) % 1000 == 0:
+                logger.info(f"Completed {i + 1} simulations")
         
-        # Store results
-        final_returns.append(cumulative_returns[-1])
-        max_drawdowns.append(np.min(drawdowns))
-        win_rates.append(np.sum(sampled_returns > 0) / len(sampled_returns))
+        logger.info("Monte Carlo simulation completed")
+        return final_returns, max_drawdowns, equity_curves
         
-        if (i + 1) % 1000 == 0:
-            logger.info(f"Completed {i + 1}/{num_simulations} simulations")
-    
-    return np.array(final_returns), np.array(max_drawdowns), np.array(win_rates)
+    except Exception as e:
+        logger.error(f"Error in Monte Carlo simulation: {e}")
+        raise
 
 
-def analyze_results(
+def analyze_simulation_results(
     final_returns: np.ndarray,
     max_drawdowns: np.ndarray,
-    win_rates: np.ndarray,
-    output_dir: str = "reports",
-) -> None:
-    """
-    Analyze and visualize Monte Carlo results.
-    
-    Args:
-        final_returns: Array of final return values
-        max_drawdowns: Array of maximum drawdown values
-        win_rates: Array of win rate values
-        output_dir: Output directory for plots and reports
-    """
-    os.makedirs(output_dir, exist_ok=True)
-    
-    # Calculate statistics
-    stats_dict = {
-        "Final Returns": {
-            "mean": np.mean(final_returns),
-            "std": np.std(final_returns),
-            "5th_percentile": np.percentile(final_returns, 5),
-            "25th_percentile": np.percentile(final_returns, 25),
-            "median": np.percentile(final_returns, 50),
-            "75th_percentile": np.percentile(final_returns, 75),
-            "95th_percentile": np.percentile(final_returns, 95),
-            "prob_positive": np.sum(final_returns > 0) / len(final_returns),
-        },
-        "Max Drawdowns": {
-            "mean": np.mean(max_drawdowns),
-            "std": np.std(max_drawdowns),
-            "5th_percentile": np.percentile(max_drawdowns, 5),
-            "25th_percentile": np.percentile(max_drawdowns, 25),
-            "median": np.percentile(max_drawdowns, 50),
-            "75th_percentile": np.percentile(max_drawdowns, 75),
-            "95th_percentile": np.percentile(max_drawdowns, 95),
-            "prob_exceed_3R": np.sum(max_drawdowns < -3) / len(max_drawdowns),
-            "prob_exceed_5R": np.sum(max_drawdowns < -5) / len(max_drawdowns),
-        },
-        "Win Rates": {
-            "mean": np.mean(win_rates),
-            "std": np.std(win_rates),
-            "5th_percentile": np.percentile(win_rates, 5),
-            "25th_percentile": np.percentile(win_rates, 25),
-            "median": np.percentile(win_rates, 50),
-            "75th_percentile": np.percentile(win_rates, 75),
-            "95th_percentile": np.percentile(win_rates, 95),
-        },
-    }
-    
-    # Print key statistics
-    logger.info("\nMonte Carlo Analysis Results:")
-    logger.info("=" * 50)
-    
-    logger.info(f"Probability of positive returns: {stats_dict['Final Returns']['prob_positive']:.1%}")
-    logger.info(f"Expected final return: {stats_dict['Final Returns']['mean']:.2f}R")
-    logger.info(f"Expected max drawdown: {stats_dict['Max Drawdowns']['mean']:.2f}R")
-    logger.info(f"Probability of >3R drawdown: {stats_dict['Max Drawdowns']['prob_exceed_3R']:.1%}")
-    logger.info(f"Probability of >5R drawdown: {stats_dict['Max Drawdowns']['prob_exceed_5R']:.1%}")
-    
-    # Create visualizations
-    fig, axes = plt.subplots(2, 2, figsize=(15, 12))
-    fig.suptitle("Monte Carlo Bootstrap Analysis", fontsize=16)
-    
-    # Plot 1: Final Returns Distribution
-    axes[0, 0].hist(final_returns, bins=50, alpha=0.7, edgecolor="black")
-    axes[0, 0].axvline(0, color="red", linestyle="--", label="Break-even")
-    axes[0, 0].axvline(np.mean(final_returns), color="green", linestyle="-", label="Mean")
-    axes[0, 0].set_xlabel("Final Return (R)")
-    axes[0, 0].set_ylabel("Frequency")
-    axes[0, 0].set_title("Distribution of Final Returns")
-    axes[0, 0].legend()
-    axes[0, 0].grid(True, alpha=0.3)
-    
-    # Plot 2: Max Drawdowns Distribution
-    axes[0, 1].hist(max_drawdowns, bins=50, alpha=0.7, edgecolor="black", color="red")
-    axes[0, 1].axvline(-3, color="orange", linestyle="--", label="3R Drawdown")
-    axes[0, 1].axvline(-5, color="darkred", linestyle="--", label="5R Drawdown")
-    axes[0, 1].axvline(np.mean(max_drawdowns), color="blue", linestyle="-", label="Mean")
-    axes[0, 1].set_xlabel("Max Drawdown (R)")
-    axes[0, 1].set_ylabel("Frequency")
-    axes[0, 1].set_title("Distribution of Maximum Drawdowns")
-    axes[0, 1].legend()
-    axes[0, 1].grid(True, alpha=0.3)
-    
-    # Plot 3: Win Rate Distribution
-    axes[1, 0].hist(win_rates, bins=50, alpha=0.7, edgecolor="black", color="green")
-    axes[1, 0].axvline(0.5, color="red", linestyle="--", label="50% Win Rate")
-    axes[1, 0].axvline(np.mean(win_rates), color="blue", linestyle="-", label="Mean")
-    axes[1, 0].set_xlabel("Win Rate")
-    axes[1, 0].set_ylabel("Frequency")
-    axes[1, 0].set_title("Distribution of Win Rates")
-    axes[1, 0].legend()
-    axes[1, 0].grid(True, alpha=0.3)
-    
-    # Plot 4: Return vs Drawdown Scatter
-    axes[1, 1].scatter(max_drawdowns, final_returns, alpha=0.5, s=1)
-    axes[1, 1].axhline(0, color="red", linestyle="--", alpha=0.7)
-    axes[1, 1].axvline(-3, color="orange", linestyle="--", alpha=0.7, label="3R DD")
-    axes[1, 1].axvline(-5, color="darkred", linestyle="--", alpha=0.7, label="5R DD")
-    axes[1, 1].set_xlabel("Max Drawdown (R)")
-    axes[1, 1].set_ylabel("Final Return (R)")
-    axes[1, 1].set_title("Return vs Maximum Drawdown")
-    axes[1, 1].legend()
-    axes[1, 1].grid(True, alpha=0.3)
-    
-    plt.tight_layout()
-    
-    # Save plot
-    plot_file = os.path.join(output_dir, "monte_carlo_analysis.png")
-    plt.savefig(plot_file, dpi=300, bbox_inches="tight")
-    logger.info(f"Plot saved to: {plot_file}")
-    
-    # Save detailed statistics
-    stats_file = os.path.join(output_dir, "monte_carlo_stats.txt")
-    with open(stats_file, "w") as f:
-        f.write("Monte Carlo Bootstrap Analysis Results\n")
-        f.write("=" * 50 + "\n\n")
+    returns: np.ndarray
+) -> Dict:
+    """Analyze Monte Carlo simulation results."""
+    try:
+        results = {}
         
-        for category, stats_data in stats_dict.items():
-            f.write(f"{category}:\n")
-            f.write("-" * len(category) + "\n")
-            for stat_name, value in stats_data.items():
-                if "prob" in stat_name or "percentile" not in stat_name:
-                    if "prob" in stat_name:
-                        f.write(f"  {stat_name}: {value:.1%}\n")
-                    else:
-                        f.write(f"  {stat_name}: {value:.3f}\n")
-                else:
-                    f.write(f"  {stat_name}: {value:.3f}\n")
-            f.write("\n")
-    
-    logger.info(f"Detailed statistics saved to: {stats_file}")
-    
-    # Save raw results
-    results_df = pd.DataFrame({
-        "final_return": final_returns,
-        "max_drawdown": max_drawdowns,
-        "win_rate": win_rates,
-    })
-    
-    results_file = os.path.join(output_dir, "monte_carlo_results.csv")
-    results_df.to_csv(results_file, index=False)
-    logger.info(f"Raw results saved to: {results_file}")
+        # Final return statistics
+        results['final_return_mean'] = np.mean(final_returns)
+        results['final_return_median'] = np.median(final_returns)
+        results['final_return_std'] = np.std(final_returns)
+        results['final_return_5th_percentile'] = np.percentile(final_returns, 5)
+        results['final_return_95th_percentile'] = np.percentile(final_returns, 95)
+        
+        # Probability of positive returns
+        results['prob_positive_return'] = np.mean(final_returns > 0) * 100
+        
+        # Drawdown statistics
+        results['max_drawdown_mean'] = np.mean(max_drawdowns)
+        results['max_drawdown_median'] = np.median(max_drawdowns)
+        results['max_drawdown_std'] = np.std(max_drawdowns)
+        results['max_drawdown_5th_percentile'] = np.percentile(max_drawdowns, 5)
+        results['max_drawdown_95th_percentile'] = np.percentile(max_drawdowns, 95)
+        
+        # Risk metrics (assuming R-multiples)
+        if np.mean(returns) > 0:  # Check if using R-multiples
+            results['prob_drawdown_gt_3R'] = np.mean(max_drawdowns < -3) * 100
+            results['prob_drawdown_gt_5R'] = np.mean(max_drawdowns < -5) * 100
+            results['prob_drawdown_gt_10R'] = np.mean(max_drawdowns < -10) * 100
+        
+        # Value at Risk (VaR)
+        results['var_5_percent'] = np.percentile(final_returns, 5)
+        results['var_1_percent'] = np.percentile(final_returns, 1)
+        
+        # Expected shortfall (Conditional VaR)
+        var_5 = results['var_5_percent']
+        results['expected_shortfall_5_percent'] = np.mean(final_returns[final_returns <= var_5])
+        
+        return results
+        
+    except Exception as e:
+        logger.error(f"Error analyzing results: {e}")
+        return {}
 
 
-def main() -> None:
-    """Main function to handle command line arguments."""
-    parser = argparse.ArgumentParser(description="Monte Carlo bootstrap analysis")
+def create_visualizations(
+    final_returns: np.ndarray,
+    max_drawdowns: np.ndarray,
+    equity_curves: np.ndarray,
+    output_dir: str = "reports"
+):
+    """Create visualization plots."""
+    try:
+        output_path = Path(output_dir)
+        output_path.mkdir(parents=True, exist_ok=True)
+        
+        # Set style
+        plt.style.use('seaborn-v0_8')
+        sns.set_palette("husl")
+        
+        # 1. Final Returns Distribution
+        fig, axes = plt.subplots(2, 2, figsize=(15, 12))
+        
+        # Returns histogram
+        axes[0, 0].hist(final_returns, bins=50, alpha=0.7, edgecolor='black')
+        axes[0, 0].axvline(np.mean(final_returns), color='red', linestyle='--', 
+                          label=f'Mean: {np.mean(final_returns):.2f}')
+        axes[0, 0].axvline(np.median(final_returns), color='orange', linestyle='--',
+                          label=f'Median: {np.median(final_returns):.2f}')
+        axes[0, 0].set_xlabel('Final Return (R-multiples)')
+        axes[0, 0].set_ylabel('Frequency')
+        axes[0, 0].set_title('Distribution of Final Returns')
+        axes[0, 0].legend()
+        axes[0, 0].grid(True, alpha=0.3)
+        
+        # Drawdown histogram
+        axes[0, 1].hist(max_drawdowns, bins=50, alpha=0.7, color='red', edgecolor='black')
+        axes[0, 1].axvline(np.mean(max_drawdowns), color='darkred', linestyle='--',
+                          label=f'Mean: {np.mean(max_drawdowns):.2f}')
+        axes[0, 1].axvline(np.median(max_drawdowns), color='orange', linestyle='--',
+                          label=f'Median: {np.median(max_drawdowns):.2f}')
+        axes[0, 1].set_xlabel('Maximum Drawdown (R-multiples)')
+        axes[0, 1].set_ylabel('Frequency')
+        axes[0, 1].set_title('Distribution of Maximum Drawdown')
+        axes[0, 1].legend()
+        axes[0, 1].grid(True, alpha=0.3)
+        
+        # Scatter plot: Returns vs Drawdown
+        axes[1, 0].scatter(max_drawdowns, final_returns, alpha=0.5, s=1)
+        axes[1, 0].set_xlabel('Maximum Drawdown')
+        axes[1, 0].set_ylabel('Final Return')
+        axes[1, 0].set_title('Returns vs Drawdown')
+        axes[1, 0].grid(True, alpha=0.3)
+        
+        # Sample equity curves
+        sample_indices = np.random.choice(len(equity_curves), size=min(100, len(equity_curves)), replace=False)
+        for i in sample_indices:
+            axes[1, 1].plot(equity_curves[i], alpha=0.1, color='blue', linewidth=0.5)
+        
+        # Add percentile curves
+        percentiles = [5, 25, 50, 75, 95]
+        colors = ['red', 'orange', 'green', 'orange', 'red']
+        for p, color in zip(percentiles, colors):
+            curve = np.percentile(equity_curves, p, axis=0)
+            axes[1, 1].plot(curve, color=color, linewidth=2, label=f'{p}th percentile')
+        
+        axes[1, 1].set_xlabel('Trade Number')
+        axes[1, 1].set_ylabel('Cumulative Return (R-multiples)')
+        axes[1, 1].set_title('Sample Equity Curves')
+        axes[1, 1].legend()
+        axes[1, 1].grid(True, alpha=0.3)
+        
+        plt.tight_layout()
+        plt.savefig(output_path / 'monte_carlo_analysis.png', dpi=300, bbox_inches='tight')
+        plt.close()
+        
+        # 2. Risk Analysis Plot
+        fig, axes = plt.subplots(1, 2, figsize=(15, 6))
+        
+        # QQ plot for returns
+        stats.probplot(final_returns, dist="norm", plot=axes[0])
+        axes[0].set_title('Q-Q Plot: Final Returns vs Normal Distribution')
+        axes[0].grid(True, alpha=0.3)
+        
+        # Drawdown probability plot
+        drawdown_thresholds = np.arange(-1, -20, -1)
+        probabilities = [np.mean(max_drawdowns <= threshold) * 100 for threshold in drawdown_thresholds]
+        
+        axes[1].plot(-drawdown_thresholds, probabilities, marker='o', linewidth=2, markersize=6)
+        axes[1].set_xlabel('Drawdown Threshold (R-multiples)')
+        axes[1].set_ylabel('Probability (%)')
+        axes[1].set_title('Probability of Exceeding Drawdown Thresholds')
+        axes[1].grid(True, alpha=0.3)
+        axes[1].invert_xaxis()
+        
+        plt.tight_layout()
+        plt.savefig(output_path / 'monte_carlo_risk_analysis.png', dpi=300, bbox_inches='tight')
+        plt.close()
+        
+        logger.info(f"Visualizations saved to {output_path}")
+        
+    except Exception as e:
+        logger.error(f"Error creating visualizations: {e}")
+
+
+def main():
+    """Main function to handle command line arguments and execute analysis."""
+    parser = argparse.ArgumentParser(
+        description="Monte Carlo bootstrap analysis for Freqtrade trades",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter
+    )
     
     parser.add_argument(
-        "--input",
-        type=str,
-        default="reports/trades.csv",
-        help="Input trades CSV file (default: reports/trades.csv)"
+        "--trades",
+        default="reports/trades_export.csv",
+        help="Path to trades CSV file"
     )
     
     parser.add_argument(
         "--simulations",
         type=int,
-        default=10000,
-        help="Number of simulations (default: 10000)"
+        default=5000,
+        help="Number of Monte Carlo simulations"
     )
     
     parser.add_argument(
-        "--trades",
+        "--trades-per-sim",
         type=int,
         help="Number of trades per simulation (default: same as historical)"
     )
     
     parser.add_argument(
         "--output-dir",
-        type=str,
         default="reports",
-        help="Output directory (default: reports)"
+        help="Output directory for results and plots"
+    )
+    
+    parser.add_argument(
+        "--no-plots",
+        action="store_true",
+        help="Skip generating plots"
+    )
+    
+    parser.add_argument(
+        "--verbose", "-v",
+        action="store_true",
+        help="Enable verbose logging"
     )
     
     args = parser.parse_args()
     
+    # Set log level
+    if args.verbose:
+        logging.getLogger().setLevel(logging.DEBUG)
+    
     try:
-        # Load historical R-multiples
-        r_multiples = load_r_multiples(args.input)
+        # Load trade data
+        logger.info(f"Loading trade data from: {args.trades}")
+        df = load_trade_data(args.trades)
         
-        if not r_multiples:
-            logger.error("No R-multiples found in input file")
-            return
-            
+        # Prepare returns data
+        returns = prepare_returns_data(df)
+        
         # Run Monte Carlo simulation
-        final_returns, max_drawdowns, win_rates = monte_carlo_simulation(
-            r_multiples=r_multiples,
-            num_simulations=args.simulations,
-            num_trades=args.trades,
+        final_returns, max_drawdowns, equity_curves = run_monte_carlo_simulation(
+            returns, args.simulations, args.trades_per_sim
         )
         
-        # Analyze and visualize results
-        analyze_results(
-            final_returns=final_returns,
-            max_drawdowns=max_drawdowns,
-            win_rates=win_rates,
-            output_dir=args.output_dir,
-        )
+        # Analyze results
+        results = analyze_simulation_results(final_returns, max_drawdowns, returns)
         
-        logger.info("Monte Carlo analysis completed successfully")
+        # Print results
+        logger.info("\n" + "="*60)
+        logger.info("MONTE CARLO SIMULATION RESULTS")
+        logger.info("="*60)
+        
+        logger.info(f"Simulations run: {args.simulations}")
+        logger.info(f"Trades per simulation: {len(returns) if args.trades_per_sim is None else args.trades_per_sim}")
+        logger.info("")
+        
+        logger.info("FINAL RETURN STATISTICS:")
+        logger.info(f"  Mean: {results.get('final_return_mean', 0):.3f}")
+        logger.info(f"  Median: {results.get('final_return_median', 0):.3f}")
+        logger.info(f"  Standard Deviation: {results.get('final_return_std', 0):.3f}")
+        logger.info(f"  5th Percentile: {results.get('final_return_5th_percentile', 0):.3f}")
+        logger.info(f"  95th Percentile: {results.get('final_return_95th_percentile', 0):.3f}")
+        logger.info(f"  Probability of Positive Return: {results.get('prob_positive_return', 0):.1f}%")
+        logger.info("")
+        
+        logger.info("DRAWDOWN STATISTICS:")
+        logger.info(f"  Mean Max Drawdown: {results.get('max_drawdown_mean', 0):.3f}")
+        logger.info(f"  Median Max Drawdown: {results.get('max_drawdown_median', 0):.3f}")
+        logger.info(f"  5th Percentile (Worst): {results.get('max_drawdown_5th_percentile', 0):.3f}")
+        
+        if 'prob_drawdown_gt_3R' in results:
+            logger.info(f"  Probability of Drawdown > 3R: {results['prob_drawdown_gt_3R']:.1f}%")
+            logger.info(f"  Probability of Drawdown > 5R: {results['prob_drawdown_gt_5R']:.1f}%")
+            logger.info(f"  Probability of Drawdown > 10R: {results['prob_drawdown_gt_10R']:.1f}%")
+        
+        logger.info("")
+        logger.info("RISK METRICS:")
+        logger.info(f"  VaR (5%): {results.get('var_5_percent', 0):.3f}")
+        logger.info(f"  VaR (1%): {results.get('var_1_percent', 0):.3f}")
+        logger.info(f"  Expected Shortfall (5%): {results.get('expected_shortfall_5_percent', 0):.3f}")
+        
+        # Save results to file
+        output_path = Path(args.output_dir)
+        output_path.mkdir(parents=True, exist_ok=True)
+        
+        results_file = output_path / 'monte_carlo_results.json'
+        import json
+        with open(results_file, 'w') as f:
+            json.dump(results, f, indent=2)
+        logger.info(f"Results saved to: {results_file}")
+        
+        # Create visualizations
+        if not args.no_plots:
+            logger.info("Creating visualizations...")
+            create_visualizations(final_returns, max_drawdowns, equity_curves, args.output_dir)
+        
+        logger.info("Monte Carlo analysis completed successfully!")
         
     except Exception as e:
-        logger.error(f"Error running Monte Carlo analysis: {e}")
-        raise
+        logger.error(f"Error in main execution: {e}")
+        sys.exit(1)
 
 
 if __name__ == "__main__":

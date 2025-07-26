@@ -1,47 +1,84 @@
 #!/usr/bin/env python3
 """
-Export trades from Freqtrade database to CSV with R-multiples calculation.
+Trade Export Script for Freqtrade
+
+Exports trades from the SQLite database to CSV format with additional analytics
+including R-multiples, win rates, and performance metrics.
 
 Usage:
-    python scripts/export_trades.py --db-url sqlite:///user_data/trades.sqlite --output trades.csv
+    python scripts/export_trades.py --config user_data/config.paper.json
+    python scripts/export_trades.py --output reports/trades_analysis.csv
 """
 
 import argparse
 import logging
 import os
-import sqlite3
+import sys
 from datetime import datetime
-from typing import Optional
+from pathlib import Path
+from typing import Dict, List, Optional
 
 import pandas as pd
+import numpy as np
 
-logging.basicConfig(level=logging.INFO)
+# Set up logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s'
+)
 logger = logging.getLogger(__name__)
 
 
-def load_trades_from_db(db_url: str) -> pd.DataFrame:
+def load_freqtrade_config(config_path: str) -> Dict:
+    """Load Freqtrade configuration from JSON file."""
+    import json
+    
+    try:
+        with open(config_path, 'r') as f:
+            config = json.load(f)
+        return config
+    except Exception as e:
+        logger.error(f"Error loading config from {config_path}: {e}")
+        raise
+
+
+def connect_to_database(db_url: str):
+    """Connect to the Freqtrade database."""
+    try:
+        from sqlalchemy import create_engine
+        from sqlalchemy.orm import sessionmaker
+        
+        engine = create_engine(db_url)
+        Session = sessionmaker(bind=engine)
+        session = Session()
+        
+        return session, engine
+    except Exception as e:
+        logger.error(f"Error connecting to database {db_url}: {e}")
+        raise
+
+
+def export_trades_from_db(config_path: str) -> pd.DataFrame:
     """
-    Load trades from SQLite database.
+    Export trades directly from Freqtrade database.
     
     Args:
-        db_url: Database URL (e.g., 'sqlite:///user_data/trades.sqlite')
+        config_path: Path to Freqtrade config file
         
     Returns:
         DataFrame with trade data
     """
-    # Extract SQLite file path from URL
-    if db_url.startswith("sqlite:///"):
-        db_path = db_url.replace("sqlite:///", "")
-    else:
-        raise ValueError(f"Unsupported database URL: {db_url}")
-        
-    if not os.path.exists(db_path):
-        raise FileNotFoundError(f"Database file not found: {db_path}")
-    
-    # Connect to database and load trades
     try:
-        conn = sqlite3.connect(db_path)
+        # Load config
+        config = load_freqtrade_config(config_path)
+        db_url = config.get('db_url', 'sqlite:///user_data/trades.sqlite')
         
+        logger.info(f"Connecting to database: {db_url}")
+        
+        # Connect to database
+        session, engine = connect_to_database(db_url)
+        
+        # Query trades table
         query = """
         SELECT 
             id,
@@ -53,176 +90,256 @@ def load_trades_from_db(db_url: str) -> pd.DataFrame:
             open_rate,
             close_rate,
             amount,
+            amount_requested,
             stake_amount,
             close_profit,
             close_profit_abs,
-            trade_duration,
+            sell_reason as exit_reason,
+            strategy,
+            enter_tag,
+            timeframe,
             open_date,
             close_date,
             open_order_id,
-            strategy,
-            enter_tag,
-            exit_reason
+            stop_loss,
+            initial_stop_loss,
+            stoploss_order_id,
+            stoploss_last_update,
+            max_rate,
+            min_rate,
+            exit_order_id,
+            realized_profit
         FROM trades
-        WHERE is_open = 0
-        ORDER BY close_date
+        ORDER BY open_date DESC
         """
         
-        df = pd.read_sql_query(query, conn)
-        conn.close()
+        df = pd.read_sql_query(query, engine)
+        logger.info(f"Exported {len(df)} trades from database")
         
-        logger.info(f"Loaded {len(df)} closed trades from database")
+        # Close connections
+        session.close()
+        engine.dispose()
+        
         return df
-        
-    except Exception as e:
-        logger.error(f"Error loading trades from database: {e}")
-        raise
-
-
-def calculate_r_multiples(df: pd.DataFrame, risk_unit_usd: float = 5.0) -> pd.DataFrame:
-    """
-    Calculate R-multiples for each trade.
-    
-    Args:
-        df: DataFrame with trade data
-        risk_unit_usd: Risk unit in USD (default: 5.0)
-        
-    Returns:
-        DataFrame with R-multiples added
-    """
-    df = df.copy()
-    
-    # Calculate R-multiple: profit / risk_unit
-    df["r_multiple"] = df["close_profit_abs"] / risk_unit_usd
-    
-    # Calculate cumulative R-multiples
-    df["cumulative_r"] = df["r_multiple"].cumsum()
-    
-    # Calculate running maximum for drawdown calculation
-    df["running_max_r"] = df["cumulative_r"].cummax()
-    df["drawdown_r"] = df["cumulative_r"] - df["running_max_r"]
-    
-    # Convert dates to datetime
-    df["open_date"] = pd.to_datetime(df["open_date"])
-    df["close_date"] = pd.to_datetime(df["close_date"])
-    
-    # Calculate trade duration in hours
-    df["duration_hours"] = (df["close_date"] - df["open_date"]).dt.total_seconds() / 3600
-    
-    return df
-
-
-def export_trades(
-    db_url: str,
-    output_file: str,
-    risk_unit_usd: float = 5.0,
-) -> None:
-    """
-    Export trades with R-multiples to CSV.
-    
-    Args:
-        db_url: Database URL
-        output_file: Output CSV file path
-        risk_unit_usd: Risk unit in USD
-    """
-    try:
-        # Load trades from database
-        df = load_trades_from_db(db_url)
-        
-        if df.empty:
-            logger.warning("No closed trades found in database")
-            return
-            
-        # Calculate R-multiples
-        df = calculate_r_multiples(df, risk_unit_usd)
-        
-        # Reorder columns for better readability
-        columns = [
-            "id", "pair", "strategy", "enter_tag", "exit_reason",
-            "open_date", "close_date", "duration_hours",
-            "open_rate", "close_rate", "amount", "stake_amount",
-            "close_profit", "close_profit_abs", "r_multiple",
-            "cumulative_r", "drawdown_r", "fee_open", "fee_close"
-        ]
-        
-        df = df[columns]
-        
-        # Export to CSV
-        df.to_csv(output_file, index=False, float_format="%.4f")
-        
-        # Print summary statistics
-        total_trades = len(df)
-        winning_trades = len(df[df["r_multiple"] > 0])
-        losing_trades = len(df[df["r_multiple"] < 0])
-        win_rate = winning_trades / total_trades if total_trades > 0 else 0
-        
-        total_r = df["r_multiple"].sum()
-        max_drawdown_r = df["drawdown_r"].min()
-        
-        logger.info(f"Trades exported to: {output_file}")
-        logger.info(f"Total trades: {total_trades}")
-        logger.info(f"Win rate: {win_rate:.2%}")
-        logger.info(f"Total return: {total_r:.2f}R")
-        logger.info(f"Max drawdown: {max_drawdown_r:.2f}R")
-        
-        # Export summary statistics
-        summary_file = output_file.replace(".csv", "_summary.txt")
-        with open(summary_file, "w") as f:
-            f.write(f"Trade Summary (Risk Unit: {risk_unit_usd} USD)\n")
-            f.write("=" * 50 + "\n")
-            f.write(f"Total trades: {total_trades}\n")
-            f.write(f"Winning trades: {winning_trades}\n")
-            f.write(f"Losing trades: {losing_trades}\n")
-            f.write(f"Win rate: {win_rate:.2%}\n")
-            f.write(f"Total return: {total_r:.2f}R ({total_r * risk_unit_usd:.2f} USD)\n")
-            f.write(f"Max drawdown: {max_drawdown_r:.2f}R ({max_drawdown_r * risk_unit_usd:.2f} USD)\n")
-            f.write(f"Average R per trade: {df['r_multiple'].mean():.2f}R\n")
-            f.write(f"Best trade: {df['r_multiple'].max():.2f}R\n")
-            f.write(f"Worst trade: {df['r_multiple'].min():.2f}R\n")
-            
-        logger.info(f"Summary saved to: {summary_file}")
         
     except Exception as e:
         logger.error(f"Error exporting trades: {e}")
         raise
 
 
-def main() -> None:
-    """Main function to handle command line arguments."""
-    parser = argparse.ArgumentParser(description="Export Freqtrade trades with R-multiples")
+def calculate_r_multiples(df: pd.DataFrame, r_usd: float = 5.0) -> pd.DataFrame:
+    """
+    Calculate R-multiples for each trade.
+    
+    R-multiple = (Exit Price - Entry Price) / (Entry Price - Stop Loss)
+    
+    Args:
+        df: DataFrame with trade data
+        r_usd: Risk amount in USD per trade
+        
+    Returns:
+        DataFrame with R-multiple calculations
+    """
+    try:
+        df = df.copy()
+        
+        # Calculate trade duration
+        df['open_date'] = pd.to_datetime(df['open_date'])
+        df['close_date'] = pd.to_datetime(df['close_date'])
+        df['duration_hours'] = (df['close_date'] - df['open_date']).dt.total_seconds() / 3600
+        
+        # Calculate R-multiples for closed trades
+        closed_trades = df[df['is_open'] == 0].copy()
+        
+        if len(closed_trades) > 0:
+            # Simple R calculation based on profit/loss vs risk amount
+            closed_trades['r_multiple'] = closed_trades['close_profit_abs'] / r_usd
+            
+            # Alternative R calculation using stop loss (if available)
+            mask = (closed_trades['initial_stop_loss'].notna()) & (closed_trades['initial_stop_loss'] > 0)
+            if mask.any():
+                entry_stop_diff = closed_trades.loc[mask, 'open_rate'] - closed_trades.loc[mask, 'initial_stop_loss']
+                profit_loss = closed_trades.loc[mask, 'close_rate'] - closed_trades.loc[mask, 'open_rate']
+                closed_trades.loc[mask, 'r_multiple_stop'] = profit_loss / entry_stop_diff
+            
+            # Merge back
+            df = df.merge(
+                closed_trades[['id', 'r_multiple', 'duration_hours']].fillna(0),
+                on='id',
+                how='left'
+            )
+            
+            if 'r_multiple_stop' in closed_trades.columns:
+                df = df.merge(
+                    closed_trades[['id', 'r_multiple_stop']].fillna(0),
+                    on='id',
+                    how='left'
+                )
+        
+        return df
+        
+    except Exception as e:
+        logger.error(f"Error calculating R-multiples: {e}")
+        return df
+
+
+def calculate_performance_metrics(df: pd.DataFrame) -> Dict:
+    """Calculate performance metrics from trades."""
+    try:
+        closed_trades = df[df['is_open'] == 0]
+        
+        if len(closed_trades) == 0:
+            return {"error": "No closed trades found"}
+        
+        metrics = {}
+        
+        # Basic metrics
+        metrics['total_trades'] = len(closed_trades)
+        metrics['winning_trades'] = len(closed_trades[closed_trades['close_profit'] > 0])
+        metrics['losing_trades'] = len(closed_trades[closed_trades['close_profit'] <= 0])
+        metrics['win_rate'] = (metrics['winning_trades'] / metrics['total_trades']) * 100
+        
+        # Profit metrics
+        metrics['total_profit_abs'] = closed_trades['close_profit_abs'].sum()
+        metrics['total_profit_pct'] = closed_trades['close_profit'].sum() * 100
+        
+        metrics['avg_profit_abs'] = closed_trades['close_profit_abs'].mean()
+        metrics['avg_profit_pct'] = closed_trades['close_profit'].mean() * 100
+        
+        metrics['best_trade_abs'] = closed_trades['close_profit_abs'].max()
+        metrics['worst_trade_abs'] = closed_trades['close_profit_abs'].min()
+        
+        metrics['best_trade_pct'] = closed_trades['close_profit'].max() * 100
+        metrics['worst_trade_pct'] = closed_trades['close_profit'].min() * 100
+        
+        # R-multiple metrics (if available)
+        if 'r_multiple' in closed_trades.columns:
+            r_data = closed_trades['r_multiple'].dropna()
+            if len(r_data) > 0:
+                metrics['avg_r_multiple'] = r_data.mean()
+                metrics['total_r_multiple'] = r_data.sum()
+                metrics['best_r_multiple'] = r_data.max()
+                metrics['worst_r_multiple'] = r_data.min()
+        
+        # Duration metrics
+        if 'duration_hours' in closed_trades.columns:
+            duration_data = closed_trades['duration_hours'].dropna()
+            if len(duration_data) > 0:
+                metrics['avg_duration_hours'] = duration_data.mean()
+                metrics['median_duration_hours'] = duration_data.median()
+        
+        # Drawdown calculation (simple)
+        closed_trades_sorted = closed_trades.sort_values('close_date')
+        cumulative_profit = closed_trades_sorted['close_profit_abs'].cumsum()
+        running_max = cumulative_profit.expanding().max()
+        drawdown = (cumulative_profit - running_max)
+        metrics['max_drawdown_abs'] = drawdown.min()
+        
+        return metrics
+        
+    except Exception as e:
+        logger.error(f"Error calculating performance metrics: {e}")
+        return {"error": str(e)}
+
+
+def main():
+    """Main function to handle command line arguments and execute export."""
+    parser = argparse.ArgumentParser(
+        description="Export Freqtrade trades with analytics",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter
+    )
     
     parser.add_argument(
-        "--db-url",
-        type=str,
-        default="sqlite:///user_data/trades.sqlite",
-        help="Database URL (default: sqlite:///user_data/trades.sqlite)"
+        "--config",
+        default="user_data/config.paper.json",
+        help="Freqtrade config file path"
     )
     
     parser.add_argument(
         "--output",
-        type=str,
-        default="reports/trades.csv",
-        help="Output CSV file (default: reports/trades.csv)"
+        default="reports/trades_export.csv",
+        help="Output CSV file path"
     )
     
     parser.add_argument(
-        "--risk-unit",
+        "--r-usd",
         type=float,
         default=5.0,
-        help="Risk unit in USD (default: 5.0)"
+        help="Risk amount in USD per trade for R-multiple calculation"
+    )
+    
+    parser.add_argument(
+        "--metrics-only",
+        action="store_true",
+        help="Only show performance metrics, don't export CSV"
+    )
+    
+    parser.add_argument(
+        "--verbose", "-v",
+        action="store_true", 
+        help="Enable verbose logging"
     )
     
     args = parser.parse_args()
     
-    # Create output directory if it doesn't exist
-    os.makedirs(os.path.dirname(args.output), exist_ok=True)
+    # Set log level
+    if args.verbose:
+        logging.getLogger().setLevel(logging.DEBUG)
     
-    # Export trades
-    export_trades(
-        db_url=args.db_url,
-        output_file=args.output,
-        risk_unit_usd=args.risk_unit,
-    )
+    try:
+        # Export trades
+        logger.info(f"Exporting trades from config: {args.config}")
+        df = export_trades_from_db(args.config)
+        
+        if len(df) == 0:
+            logger.warning("No trades found in database")
+            return
+        
+        # Calculate R-multiples
+        logger.info("Calculating R-multiples...")
+        df = calculate_r_multiples(df, args.r_usd)
+        
+        # Calculate performance metrics
+        logger.info("Calculating performance metrics...")
+        metrics = calculate_performance_metrics(df)
+        
+        # Print metrics
+        logger.info("\n" + "="*50)
+        logger.info("PERFORMANCE METRICS")
+        logger.info("="*50)
+        
+        for key, value in metrics.items():
+            if isinstance(value, float):
+                if 'pct' in key or 'rate' in key:
+                    logger.info(f"{key.replace('_', ' ').title()}: {value:.2f}%")
+                elif 'r_multiple' in key:
+                    logger.info(f"{key.replace('_', ' ').title()}: {value:.2f}R")
+                else:
+                    logger.info(f"{key.replace('_', ' ').title()}: {value:.2f}")
+            else:
+                logger.info(f"{key.replace('_', ' ').title()}: {value}")
+        
+        if not args.metrics_only:
+            # Create output directory
+            output_path = Path(args.output)
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            
+            # Export to CSV
+            df.to_csv(args.output, index=False)
+            logger.info(f"Trades exported to: {args.output}")
+            
+            # Also export metrics to JSON
+            metrics_path = output_path.parent / f"{output_path.stem}_metrics.json"
+            import json
+            with open(metrics_path, 'w') as f:
+                json.dump(metrics, f, indent=2, default=str)
+            logger.info(f"Metrics exported to: {metrics_path}")
+        
+        logger.info("Trade export completed successfully!")
+        
+    except Exception as e:
+        logger.error(f"Error in main execution: {e}")
+        sys.exit(1)
 
 
 if __name__ == "__main__":

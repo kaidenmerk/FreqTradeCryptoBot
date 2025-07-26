@@ -1,321 +1,428 @@
 """
-Unit tests for DonchianATRTrend strategy indicators and logic.
+Unit tests for Freqtrade DonchianATRTrend strategy
 
-Run with: pytest tests/test_indicators.py -v
+Tests indicator calculations, entry/exit signals, and strategy logic.
 """
 
-import numpy as np
-import pandas as pd
 import pytest
-import talib.abstract as ta
+import pandas as pd
+import numpy as np
+from unittest.mock import MagicMock, patch
+from datetime import datetime, timezone
 
-# Mock the strategy imports for testing
-class MockStrategy:
-    def __init__(self):
-        self.don_len_entry = MockParameter(20)
-        self.don_len_exit = MockParameter(10)
-        self.ema_trend = MockParameter(200)
-        self.atr_mult = MockParameter(1.5)
+# Import the strategy
+import sys
+from pathlib import Path
+sys.path.append(str(Path(__file__).parent.parent / "user_data" / "strategies"))
 
-class MockParameter:
-    def __init__(self, value):
-        self.value = value
+from donchian_atr import DonchianATRTrend
 
 
-def create_test_dataframe(length: int = 100) -> pd.DataFrame:
-    """Create a synthetic OHLCV dataframe for testing."""
-    np.random.seed(42)  # For reproducible tests
+class TestDonchianATRTrend:
+    """Test cases for DonchianATRTrend strategy"""
     
-    # Generate price data with some trend
-    base_price = 50000
-    price_changes = np.random.normal(0, 0.02, length)  # 2% daily volatility
-    prices = [base_price]
+    @pytest.fixture
+    def strategy(self):
+        """Create strategy instance for testing"""
+        return DonchianATRTrend()
     
-    for change in price_changes:
-        new_price = prices[-1] * (1 + change)
-        prices.append(new_price)
-    
-    prices = np.array(prices[1:])  # Remove first element
-    
-    # Create OHLCV data
-    highs = prices * (1 + np.abs(np.random.normal(0, 0.01, length)))
-    lows = prices * (1 - np.abs(np.random.normal(0, 0.01, length)))
-    opens = prices + np.random.normal(0, prices * 0.005, length)
-    volumes = np.random.randint(1000, 10000, length)
-    
-    df = pd.DataFrame({
-        'open': opens,
-        'high': highs,
-        'low': lows,
-        'close': prices,
-        'volume': volumes,
-    })
-    
-    return df
-
-
-def calculate_donchian_channels(df: pd.DataFrame, period: int) -> pd.DataFrame:
-    """Calculate Donchian channels for testing."""
-    df = df.copy()
-    df[f'don_upper_{period}'] = df['high'].rolling(window=period).max()
-    df[f'don_lower_{period}'] = df['low'].rolling(window=period).min()
-    df[f'don_mid_{period}'] = (df[f'don_upper_{period}'] + df[f'don_lower_{period}']) / 2
-    return df
-
-
-def calculate_ema(df: pd.DataFrame, period: int) -> pd.DataFrame:
-    """Calculate EMA for testing."""
-    df = df.copy()
-    df[f'ema_{period}'] = ta.EMA(df, timeperiod=period)
-    return df
-
-
-def calculate_atr(df: pd.DataFrame, period: int = 14) -> pd.DataFrame:
-    """Calculate ATR for testing."""
-    df = df.copy()
-    df['atr'] = ta.ATR(df, timeperiod=period)
-    return df
-
-
-class TestDonchianIndicators:
-    """Test Donchian channel calculations."""
-    
-    def test_donchian_upper_calculation(self):
-        """Test that Donchian upper channel is calculated correctly."""
-        df = create_test_dataframe(50)
-        period = 20
+    @pytest.fixture
+    def sample_dataframe(self):
+        """Create sample OHLCV dataframe for testing"""
+        np.random.seed(42)  # For reproducible tests
         
-        df = calculate_donchian_channels(df, period)
+        dates = pd.date_range('2023-01-01', periods=300, freq='1H')
         
-        # Manual calculation for verification
-        expected_upper = df['high'].rolling(window=period).max()
+        # Create realistic OHLCV data with some trends
+        base_price = 50000
+        returns = np.random.normal(0, 0.02, len(dates))  # 2% volatility
         
-        assert df[f'don_upper_{period}'].equals(expected_upper)
-        assert not df[f'don_upper_{period}'].iloc[period-1:].isna().any()
-    
-    def test_donchian_lower_calculation(self):
-        """Test that Donchian lower channel is calculated correctly."""
-        df = create_test_dataframe(50)
-        period = 20
+        # Add some trend
+        trend = np.linspace(0, 0.1, len(dates))
+        returns += trend / len(dates)
         
-        df = calculate_donchian_channels(df, period)
+        prices = base_price * np.cumprod(1 + returns)
         
-        # Manual calculation for verification
-        expected_lower = df['low'].rolling(window=period).min()
+        # Generate OHLC from prices
+        high = prices * (1 + np.abs(np.random.normal(0, 0.005, len(dates))))
+        low = prices * (1 - np.abs(np.random.normal(0, 0.005, len(dates))))
+        open_prices = prices + np.random.normal(0, prices * 0.001)
+        close_prices = prices
         
-        assert df[f'don_lower_{period}'].equals(expected_lower)
-        assert not df[f'don_lower_{period}'].iloc[period-1:].isna().any()
-    
-    def test_donchian_mid_calculation(self):
-        """Test that Donchian mid-line is calculated correctly."""
-        df = create_test_dataframe(50)
-        period = 20
+        volume = np.random.uniform(100, 1000, len(dates))
         
-        df = calculate_donchian_channels(df, period)
-        
-        # Manual calculation for verification
-        expected_mid = (df[f'don_upper_{period}'] + df[f'don_lower_{period}']) / 2
-        
-        assert df[f'don_mid_{period}'].equals(expected_mid)
-        assert not df[f'don_mid_{period}'].iloc[period-1:].isna().any()
-    
-    def test_donchian_upper_greater_than_lower(self):
-        """Test that upper channel is always >= lower channel."""
-        df = create_test_dataframe(50)
-        period = 20
-        
-        df = calculate_donchian_channels(df, period)
-        
-        valid_data = df.iloc[period-1:]  # Skip NaN values
-        assert (valid_data[f'don_upper_{period}'] >= valid_data[f'don_lower_{period}']).all()
-
-
-class TestATRIndicator:
-    """Test ATR (Average True Range) calculations."""
-    
-    def test_atr_calculation(self):
-        """Test that ATR is calculated correctly."""
-        df = create_test_dataframe(50)
-        df = calculate_atr(df)
-        
-        # ATR should be positive and non-zero for valid data
-        valid_atr = df['atr'].dropna()
-        assert (valid_atr > 0).all()
-        assert len(valid_atr) == len(df) - 13  # 14-period ATR means 13 NaN values
-    
-    def test_atr_volatility_relationship(self):
-        """Test that ATR increases with volatility."""
-        # Create low volatility data
-        low_vol_df = create_test_dataframe(50)
-        low_vol_df['high'] = low_vol_df['close'] * 1.001  # 0.1% range
-        low_vol_df['low'] = low_vol_df['close'] * 0.999
-        low_vol_atr = calculate_atr(low_vol_df)['atr'].mean()
-        
-        # Create high volatility data
-        high_vol_df = create_test_dataframe(50)
-        high_vol_df['high'] = high_vol_df['close'] * 1.05  # 5% range
-        high_vol_df['low'] = high_vol_df['close'] * 0.95
-        high_vol_atr = calculate_atr(high_vol_df)['atr'].mean()
-        
-        assert high_vol_atr > low_vol_atr
-
-
-class TestEMAIndicator:
-    """Test EMA (Exponential Moving Average) calculations."""
-    
-    def test_ema_calculation(self):
-        """Test that EMA is calculated correctly."""
-        df = create_test_dataframe(50)
-        period = 20
-        df = calculate_ema(df, period)
-        
-        # EMA should not have NaN values after warmup
-        valid_ema = df[f'ema_{period}'].dropna()
-        assert len(valid_ema) == len(df) - period + 1
-        assert (valid_ema > 0).all()  # Prices are positive
-    
-    def test_ema_trend_following(self):
-        """Test that EMA follows price trends."""
-        # Create trending data
         df = pd.DataFrame({
-            'open': [100, 101, 102, 103, 104],
-            'high': [101, 102, 103, 104, 105],
-            'low': [99, 100, 101, 102, 103],
-            'close': [100, 101, 102, 103, 104],
-            'volume': [1000, 1000, 1000, 1000, 1000],
+            'date': dates,
+            'open': open_prices,
+            'high': high,
+            'low': low,
+            'close': close_prices,
+            'volume': volume
         })
         
-        df = calculate_ema(df, 3)
-        ema_values = df['ema_3'].dropna()
+        return df
+    
+    def test_strategy_initialization(self, strategy):
+        """Test strategy initializes correctly"""
+        assert strategy.timeframe == '1h'
+        assert strategy.can_short is False
+        assert strategy.startup_candle_count == 250
+        assert hasattr(strategy, 'don_len_entry')
+        assert hasattr(strategy, 'don_len_exit')
+        assert hasattr(strategy, 'ema_len')
+        assert hasattr(strategy, 'atr_len')
+        assert hasattr(strategy, 'atr_mult')
+    
+    def test_populate_indicators(self, strategy, sample_dataframe):
+        """Test that indicators are calculated correctly"""
+        df = strategy.populate_indicators(sample_dataframe, {'pair': 'BTC/USD'})
         
-        # EMA should be increasing for uptrending data
-        assert (ema_values.diff().dropna() > 0).all()
+        # Check that all required indicators are present
+        required_indicators = [
+            'don_upper_entry', 'don_lower_entry',
+            'don_upper_exit', 'don_lower_exit', 'don_mid_exit',
+            'ema', 'atr', 'rsi', 'macd', 'macdsignal', 'macdhist',
+            'volume_sma'
+        ]
+        
+        for indicator in required_indicators:
+            assert indicator in df.columns, f"Missing indicator: {indicator}"
+        
+        # Check indicator values are reasonable
+        assert not df['atr'].isnull().all(), "ATR should not be all null"
+        assert not df['ema'].isnull().all(), "EMA should not be all null"
+        assert not df['rsi'].isnull().all(), "RSI should not be all null"
+        
+        # Check Donchian channels are calculated correctly
+        # Upper channel should be >= high prices
+        valid_upper = df['don_upper_entry'].dropna()
+        valid_high = df['high'][df['don_upper_entry'].notna()]
+        assert (valid_upper >= valid_high).all(), "Donchian upper should be >= high"
+        
+        # Lower channel should be <= low prices  
+        valid_lower = df['don_lower_entry'].dropna()
+        valid_low = df['low'][df['don_lower_entry'].notna()]
+        assert (valid_lower <= valid_low).all(), "Donchian lower should be <= low"
+        
+        # Mid line should be between upper and lower
+        valid_indices = ~(df['don_upper_exit'].isnull() | df['don_lower_exit'].isnull())
+        upper_exit = df.loc[valid_indices, 'don_upper_exit']
+        lower_exit = df.loc[valid_indices, 'don_lower_exit']  
+        mid_exit = df.loc[valid_indices, 'don_mid_exit']
+        
+        assert ((mid_exit >= lower_exit) & (mid_exit <= upper_exit)).all(), \
+            "Donchian mid should be between upper and lower"
+    
+    def test_populate_entry_trend(self, strategy, sample_dataframe):
+        """Test entry signal generation"""
+        # First populate indicators
+        df = strategy.populate_indicators(sample_dataframe, {'pair': 'BTC/USD'})
+        
+        # Then populate entry signals
+        df = strategy.populate_entry_trend(df, {'pair': 'BTC/USD'})
+        
+        # Check that enter_long column exists
+        assert 'enter_long' in df.columns
+        
+        # Check that signals are binary (0 or 1)
+        entry_values = df['enter_long'].dropna().unique()
+        assert all(val in [0, 1] for val in entry_values), "Entry signals should be 0 or 1"
+        
+        # Check that we have some entry signals (not all zeros)
+        assert df['enter_long'].sum() > 0, "Should have at least some entry signals"
+        
+        # Verify entry logic: entry signals should occur when close > don_upper_entry
+        entry_signals = df[df['enter_long'] == 1]
+        if len(entry_signals) > 0:
+            # Note: We shift don_upper_entry by 1 in the strategy
+            prev_upper = df['don_upper_entry'].shift(1)
+            entry_closes = entry_signals['close']
+            entry_indices = entry_signals.index
+            prev_upper_at_entry = prev_upper.loc[entry_indices]
+            
+            # Should be mostly true (allowing for some noise due to other conditions)
+            breakout_condition = entry_closes > prev_upper_at_entry
+            assert breakout_condition.sum() / len(breakout_condition) > 0.8, \
+                "Most entry signals should occur on Donchian breakouts"
+    
+    def test_populate_exit_trend(self, strategy, sample_dataframe):
+        """Test exit signal generation"""
+        # Populate indicators and entry signals first
+        df = strategy.populate_indicators(sample_dataframe, {'pair': 'BTC/USD'})
+        df = strategy.populate_entry_trend(df, {'pair': 'BTC/USD'})
+        
+        # Then populate exit signals
+        df = strategy.populate_exit_trend(df, {'pair': 'BTC/USD'})
+        
+        # Check that exit_long column exists
+        assert 'exit_long' in df.columns
+        
+        # Check that signals are binary (0 or 1)
+        exit_values = df['exit_long'].dropna().unique()
+        assert all(val in [0, 1] for val in exit_values), "Exit signals should be 0 or 1"
+    
+    @patch('user_data.strategies.donchian_atr.logger')
+    def test_custom_stake_amount(self, mock_logger, strategy):
+        """Test custom stake amount calculation"""
+        # Mock the dataframe provider
+        mock_dp = MagicMock()
+        strategy.dp = mock_dp
+        
+        # Create sample dataframe with ATR
+        df = pd.DataFrame({
+            'atr': [0.02, 0.025, 0.03]  # 2-3% ATR
+        })
+        
+        mock_dp.get_analyzed_dataframe.return_value = (df, None)
+        
+        # Test calculation
+        stake = strategy.custom_stake_amount(
+            pair='BTC/USD',
+            current_time=datetime.now(timezone.utc),
+            current_rate=50000,
+            proposed_stake=100,
+            min_stake=10,
+            max_stake=1000,
+            leverage=1.0,
+            entry_tag=None,
+            side='long'
+        )
+        
+        # Should calculate based on R / (ATR * atr_mult)
+        expected_stake = strategy.r_usd / (0.03 * strategy.atr_mult)  # Using last ATR
+        
+        assert isinstance(stake, float)
+        assert stake > 0
+        assert abs(stake - expected_stake) < 0.01, f"Expected {expected_stake}, got {stake}"
+    
+    def test_custom_stake_amount_edge_cases(self, strategy):
+        """Test custom stake amount with edge cases"""
+        # Mock dataframe provider
+        mock_dp = MagicMock()
+        strategy.dp = mock_dp
+        
+        # Test with no dataframe
+        mock_dp.get_analyzed_dataframe.return_value = (None, None)
+        
+        stake = strategy.custom_stake_amount(
+            pair='BTC/USD',
+            current_time=datetime.now(timezone.utc),
+            current_rate=50000,
+            proposed_stake=100,
+            min_stake=10,
+            max_stake=1000,
+            leverage=1.0,
+            entry_tag=None,
+            side='long'
+        )
+        
+        # Should return proposed stake when no data available
+        assert stake == 100
+        
+        # Test with invalid ATR
+        df = pd.DataFrame({'atr': [np.nan, 0, -0.01]})
+        mock_dp.get_analyzed_dataframe.return_value = (df, None)
+        
+        stake = strategy.custom_stake_amount(
+            pair='BTC/USD',
+            current_time=datetime.now(timezone.utc),
+            current_rate=50000,
+            proposed_stake=100,
+            min_stake=10,
+            max_stake=1000,
+            leverage=1.0,
+            entry_tag=None,
+            side='long'
+        )
+        
+        # Should return proposed stake when ATR is invalid
+        assert stake == 100
+    
+    def test_custom_stoploss(self, strategy):
+        """Test custom stoploss calculation"""
+        # Mock dataframe provider
+        mock_dp = MagicMock()
+        strategy.dp = mock_dp
+        
+        # Sample dataframe with ATR
+        df = pd.DataFrame({
+            'atr': [0.02, 0.025, 0.03]
+        })
+        
+        mock_dp.get_analyzed_dataframe.return_value = (df, None)
+        
+        # Mock trade object
+        mock_trade = MagicMock()
+        mock_trade.open_rate = 50000
+        
+        current_rate = 51000  # 2% profit
+        
+        stoploss_ratio = strategy.custom_stoploss(
+            pair='BTC/USD',
+            trade=mock_trade,
+            current_time=datetime.now(timezone.utc),
+            current_rate=current_rate,
+            current_profit=0.02
+        )
+        
+        # Should be negative (loss ratio)
+        assert stoploss_ratio < 0
+        
+        # Should be reasonable (not more than 10% loss)
+        assert stoploss_ratio >= -0.10
+        
+        # Calculate expected stop level
+        atr_stop_distance = 0.03 * strategy.atr_mult  # Using last ATR
+        expected_stop_level = mock_trade.open_rate - atr_stop_distance
+        expected_ratio = (expected_stop_level - current_rate) / current_rate
+        expected_ratio = max(expected_ratio, -0.10)  # Capped at -10%
+        
+        assert abs(stoploss_ratio - expected_ratio) < 0.001
+    
+    def test_confirm_trade_entry(self, strategy):
+        """Test trade entry confirmation"""
+        # Mock dataframe provider
+        mock_dp = MagicMock()
+        strategy.dp = mock_dp
+        
+        # Valid dataframe with good ATR
+        df = pd.DataFrame({
+            'atr': [0.02, 0.025, 0.03]
+        })
+        
+        mock_dp.get_analyzed_dataframe.return_value = (df, None)
+        
+        # Should confirm entry with valid conditions
+        confirmed = strategy.confirm_trade_entry(
+            pair='BTC/USD',
+            order_type='limit',
+            amount=0.001,
+            rate=50000,
+            time_in_force='GTC',
+            current_time=datetime.now(timezone.utc),
+            entry_tag=None,
+            side='long'
+        )
+        
+        assert confirmed is True
+        
+        # Test with extreme volatility
+        df_volatile = pd.DataFrame({
+            'atr': [3000, 3500, 4000]  # Very high ATR (8% of price)
+        })
+        
+        mock_dp.get_analyzed_dataframe.return_value = (df_volatile, None)
+        
+        # Should still confirm but log warning
+        confirmed = strategy.confirm_trade_entry(
+            pair='BTC/USD',
+            order_type='limit',
+            amount=0.001,
+            rate=50000,
+            time_in_force='GTC',
+            current_time=datetime.now(timezone.utc),
+            entry_tag=None,
+            side='long'
+        )
+        
+        assert confirmed is True  # Still allows trade but logs warning
+    
+    def test_leverage(self, strategy):
+        """Test leverage method returns 1.0 (no leverage)"""
+        leverage = strategy.leverage(
+            pair='BTC/USD',
+            current_time=datetime.now(timezone.utc),
+            current_rate=50000,
+            proposed_leverage=2.0,
+            max_leverage=5.0,
+            entry_tag=None,
+            side='long'
+        )
+        
+        assert leverage == 1.0
+    
+    def test_hyperopt_parameters(self, strategy):
+        """Test hyperopt parameters definition"""
+        from unittest.mock import Mock
+        
+        # Mock the space module
+        mock_space = Mock()
+        mock_space.Integer = Mock(return_value='integer_space')
+        mock_space.Real = Mock(return_value='real_space')
+        
+        params = strategy.hyperopt_parameters(mock_space)
+        
+        # Check that all expected parameters are defined
+        expected_params = ['don_len_entry', 'don_len_exit', 'ema_len', 'atr_mult']
+        for param in expected_params:
+            assert param in params
+        
+        # Check that Integer and Real were called appropriately
+        assert mock_space.Integer.call_count >= 3  # At least 3 integer parameters
+        assert mock_space.Real.call_count >= 1     # At least 1 real parameter
 
 
-class TestTradingSignals:
-    """Test trading signal generation logic."""
+# Integration tests
+class TestStrategyIntegration:
+    """Integration tests with more realistic scenarios"""
     
-    def test_donchian_breakout_signal(self):
-        """Test Donchian breakout signal generation."""
-        df = create_test_dataframe(50)
-        period = 20
-        
-        df = calculate_donchian_channels(df, period)
-        
-        # Create breakout condition
-        df['donchian_breakout'] = df['close'] > df[f'don_upper_{period}']
-        
-        # Test that signal is boolean
-        assert df['donchian_breakout'].dtype == bool
-        
-        # Test that there are some breakouts in random data
-        breakout_count = df['donchian_breakout'].sum()
-        assert breakout_count >= 0  # Should be non-negative
+    @pytest.fixture
+    def strategy(self):
+        return DonchianATRTrend()
     
-    def test_trend_filter_signal(self):
-        """Test EMA trend filter signal."""
-        df = create_test_dataframe(50)
-        period = 20
+    def test_full_indicator_pipeline(self, strategy):
+        """Test the full indicator calculation pipeline"""
+        # Create a longer, more realistic dataset
+        np.random.seed(123)
+        dates = pd.date_range('2023-01-01', periods=1000, freq='1H')
         
-        df = calculate_ema(df, period)
-        df['trend_bullish'] = df['close'] > df[f'ema_{period}']
+        # Create trending market data
+        base_price = 45000
+        trend = np.linspace(0, 0.3, len(dates))  # 30% uptrend over period
+        noise = np.random.normal(0, 0.015, len(dates))  # 1.5% noise
         
-        # Test that signal is boolean
-        assert df['trend_bullish'].dtype == bool
+        returns = trend/len(dates) + noise
+        prices = base_price * np.cumprod(1 + returns)
         
-        # Count bullish signals
-        bullish_count = df['trend_bullish'].sum()
-        assert bullish_count >= 0
-    
-    def test_exit_signal(self):
-        """Test exit signal generation."""
-        df = create_test_dataframe(50)
-        period = 10
+        # Generate realistic OHLCV
+        high = prices * (1 + np.abs(np.random.normal(0, 0.003, len(dates))))
+        low = prices * (1 - np.abs(np.random.normal(0, 0.003, len(dates))))
+        open_prices = np.roll(prices, 1)  # Previous close as open
+        open_prices[0] = prices[0]
         
-        df = calculate_donchian_channels(df, period)
-        df['exit_signal'] = df['close'] < df[f'don_mid_{period}']
+        volume = np.random.lognormal(5, 1, len(dates))  # Log-normal volume
         
-        # Test that signal is boolean
-        assert df['exit_signal'].dtype == bool
+        df = pd.DataFrame({
+            'date': dates,
+            'open': open_prices,
+            'high': high,
+            'low': low,
+            'close': prices,
+            'volume': volume
+        })
         
-        # Count exit signals
-        exit_count = df['exit_signal'].sum()
-        assert exit_count >= 0
-
-
-class TestRiskManagement:
-    """Test risk management calculations."""
-    
-    def test_position_sizing_calculation(self):
-        """Test ATR-based position sizing."""
-        risk_unit = 5.0  # $5 risk per trade
-        atr_mult = 1.5
-        current_price = 50000
-        atr_value = 1000
+        # Run full pipeline
+        df = strategy.populate_indicators(df, {'pair': 'BTC/USD'})
+        df = strategy.populate_entry_trend(df, {'pair': 'BTC/USD'})
+        df = strategy.populate_exit_trend(df, {'pair': 'BTC/USD'})
         
-        # Calculate stop distance
-        stop_distance = atr_value * atr_mult
+        # Validate results
+        assert len(df) == 1000
+        assert df['enter_long'].sum() > 0, "Should generate some entry signals"
+        assert df['exit_long'].sum() > 0, "Should generate some exit signals"
         
-        # Calculate position size
-        position_size = risk_unit / stop_distance
-        
-        assert position_size > 0
-        assert position_size == 5.0 / 1500.0  # 5 / (1000 * 1.5)
-    
-    def test_r_multiple_calculation(self):
-        """Test R-multiple calculation."""
-        risk_unit = 5.0
-        profit_usd = 15.0
-        
-        r_multiple = profit_usd / risk_unit
-        
-        assert r_multiple == 3.0  # 15 / 5 = 3R
-    
-    def test_daily_loss_limit(self):
-        """Test daily loss limit logic."""
-        risk_unit = 5.0
-        max_daily_loss_r = 2.0
-        daily_pnl = -8.0  # Lost $8
-        
-        max_loss_usd = max_daily_loss_r * risk_unit  # $10
-        
-        # Should trigger loss lock
-        assert daily_pnl <= -max_loss_usd
-
-
-class TestDataValidation:
-    """Test data validation and error handling."""
-    
-    def test_empty_dataframe_handling(self):
-        """Test handling of empty dataframes."""
-        df = pd.DataFrame()
-        
-        # Should not raise errors for empty data
-        with pytest.raises((IndexError, ValueError)):
-            calculate_donchian_channels(df, 20)
-    
-    def test_insufficient_data_handling(self):
-        """Test handling of insufficient data."""
-        df = create_test_dataframe(5)  # Only 5 rows
-        period = 20  # Requires 20 rows
-        
-        df = calculate_donchian_channels(df, period)
-        
-        # All values should be NaN due to insufficient data
-        assert df[f'don_upper_{period}'].isna().all()
-        assert df[f'don_lower_{period}'].isna().all()
-    
-    def test_missing_price_data(self):
-        """Test handling of missing price data."""
-        df = create_test_dataframe(20)
-        df.loc[5:10, 'close'] = np.nan  # Insert missing data
-        
-        df = calculate_ema(df, 10)
-        
-        # EMA should handle missing data gracefully
-        assert not df['ema_10'].isna().all()
+        # Check signal quality
+        entry_signals = df[df['enter_long'] == 1]
+        if len(entry_signals) > 5:  # If we have enough signals
+            # Entry signals should generally occur during uptrends
+            entry_prices = entry_signals['close']
+            price_changes = entry_prices.pct_change(20).dropna()  # 20-period change
+            uptrend_entries = (price_changes > 0).sum()
+            
+            # At least 60% of entries should be in uptrending periods
+            assert uptrend_entries / len(price_changes) > 0.6, \
+                "Most entries should occur during uptrends"
 
 
 if __name__ == "__main__":
-    # Run the tests
     pytest.main([__file__, "-v"])

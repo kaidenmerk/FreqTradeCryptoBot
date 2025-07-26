@@ -1,127 +1,158 @@
 #!/usr/bin/env python3
 """
-Download historical data for Freqtrade strategies.
+Data Download Script for Freqtrade
+
+Downloads historical OHLCV data for specified pairs and timeframes.
+Supports multiple exchanges and flexible date ranges.
 
 Usage:
-    python scripts/download_data.py --exchange coinbasepro --pairs BTC/USD ETH/USD --timeframe 1h --days 365
+    python scripts/download_data.py --exchange coinbase --days 365
+    python scripts/download_data.py --exchange coinbase --timeframe 1h --pairs BTC/USD ETH/USD
 """
 
 import argparse
 import logging
 import subprocess
 import sys
-from typing import List, Optional
+from typing import List
 
-logging.basicConfig(level=logging.INFO)
+# Set up logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s'
+)
 logger = logging.getLogger(__name__)
 
 
 def download_data(
-    exchange: str,
-    pairs: List[str],
+    exchange: str = "coinbase",
+    quote_currency: str = "USD", 
     timeframe: str = "1h",
-    days: int = 365,
-    config: Optional[str] = None,
+    days: str = "365",
+    pairs: List[str] = None,
+    config: str = "user_data/config.paper.json"
 ) -> bool:
     """
-    Download historical data using freqtrade download-data command.
+    Download historical data using Freqtrade's download-data command.
     
     Args:
-        exchange: Exchange name (e.g., 'coinbasepro', 'binance')
-        pairs: List of trading pairs (e.g., ['BTC/USD', 'ETH/USD'])
-        timeframe: Timeframe for data (e.g., '1h', '4h', '1d')
+        exchange: Exchange name (coinbase, binance, etc.)
+        quote_currency: Quote currency (USD, USDT, etc.)
+        timeframe: Timeframe (1m, 5m, 1h, 1d, etc.)
         days: Number of days to download
-        config: Optional config file path
+        pairs: Specific pairs to download (optional)
+        config: Config file path
         
     Returns:
-        True if successful, False otherwise
+        bool: True if successful, False otherwise
     """
     try:
-        # Build the freqtrade command
+        # Build the command
         cmd = [
             "freqtrade", "download-data",
             "--exchange", exchange,
             "--timeframe", timeframe,
-            "--days", str(days),
+            "--days", days,
+            "--config", config
         ]
         
-        # Add config if specified
-        if config:
-            cmd.extend(["--config", config])
-        
-        # Add pairs
-        for pair in pairs:
-            cmd.extend(["--pairs", pair])
-            
-        logger.info(f"Downloading data: {' '.join(cmd)}")
-        
-        # Execute the command
-        result = subprocess.run(cmd, capture_output=True, text=True)
-        
-        if result.returncode == 0:
-            logger.info("Data download completed successfully")
-            logger.info(result.stdout)
-            return True
+        # Add quote currency if no specific pairs provided
+        if not pairs:
+            cmd.extend(["--quote-currency", quote_currency])
         else:
-            logger.error(f"Data download failed: {result.stderr}")
-            return False
-            
-    except Exception as e:
+            # Add specific pairs
+            for pair in pairs:
+                cmd.extend(["--pairs", pair])
+        
+        logger.info(f"Executing command: {' '.join(cmd)}")
+        
+        # Run the command
+        result = subprocess.run(cmd, check=True, capture_output=True, text=True)
+        
+        logger.info("Data download completed successfully!")
+        logger.info(result.stdout)
+        
+        return True
+        
+    except subprocess.CalledProcessError as e:
         logger.error(f"Error downloading data: {e}")
+        logger.error(f"stderr: {e.stderr}")
+        return False
+    except Exception as e:
+        logger.error(f"Unexpected error: {e}")
         return False
 
 
-def main() -> None:
-    """Main function to handle command line arguments."""
-    parser = argparse.ArgumentParser(description="Download historical data for Freqtrade")
-    
-    parser.add_argument(
-        "--exchange", 
-        type=str, 
-        default="alpaca",
-        help="Exchange name (default: alpaca, options: alpaca, coinbase)"
+def main():
+    """Main function to handle command line arguments and execute download."""
+    parser = argparse.ArgumentParser(
+        description="Download historical data for Freqtrade",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter
     )
     
     parser.add_argument(
-        "--pairs", 
-        nargs="+", 
-        default=["AAPL/USD", "TSLA/USD", "SPY/USD"],
-        help="Trading pairs to download (default: AAPL/USD TSLA/USD SPY/USD)"
+        "--exchange", 
+        default="coinbase",
+        help="Exchange to download from"
+    )
+    
+    parser.add_argument(
+        "--quote", "--quote-currency",
+        default="USD",
+        help="Quote currency to filter pairs"
     )
     
     parser.add_argument(
         "--timeframe", 
-        type=str, 
         default="1h",
-        help="Timeframe for data (default: 1h)"
+        choices=["1m", "5m", "15m", "30m", "1h", "2h", "4h", "6h", "8h", "12h", "1d"],
+        help="Timeframe for the data"
     )
     
     parser.add_argument(
-        "--days", 
-        type=int, 
-        default=365,
-        help="Number of days to download (default: 365)"
+        "--days",
+        default="365", 
+        help="Number of days to download"
     )
     
     parser.add_argument(
-        "--config", 
-        type=str,
-        help="Config file path (optional)"
+        "--pairs",
+        nargs="+",
+        help="Specific pairs to download (e.g., BTC/USD ETH/USD)"
+    )
+    
+    parser.add_argument(
+        "--config",
+        default="user_data/config.paper.json",
+        help="Config file to use"
+    )
+    
+    parser.add_argument(
+        "--verbose", "-v",
+        action="store_true",
+        help="Enable verbose logging"
     )
     
     args = parser.parse_args()
     
-    # Download the data
+    # Set log level
+    if args.verbose:
+        logging.getLogger().setLevel(logging.DEBUG)
+    
+    # Download data
     success = download_data(
         exchange=args.exchange,
-        pairs=args.pairs,
+        quote_currency=args.quote,
         timeframe=args.timeframe,
         days=args.days,
-        config=args.config,
+        pairs=args.pairs,
+        config=args.config
     )
     
     if not success:
         sys.exit(1)
+    
+    logger.info("Data download script completed successfully!")
 
 
 if __name__ == "__main__":

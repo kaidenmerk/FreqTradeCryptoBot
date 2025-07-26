@@ -1,23 +1,11 @@
-# Core Freqtrade dependencies
-freqtrade>=2024.1
+freqtrade>=2025.1
 pandas>=2.0.0
 numpy>=1.24.0
-
-# Technical Analysis libraries
-# For Windows: install TA-Lib wheel from https://www.lfd.uci.edu/~gohlke/pythonlibs/#ta-lib
-# pip install TA_Lib-0.4.28-cp311-cp311-win_amd64.whl
-# For Linux: sudo apt-get install ta-lib-dev OR brew install ta-lib
-ta-lib>=0.4.28; sys_platform != "win32"
-pandas-ta>=0.3.14b
-
-# Utilities
 python-dotenv>=1.0.0
 matplotlib>=3.7.0
-plotly>=5.17.0
-scikit-learn>=1.3.0
-
-# Development
+seaborn>=0.12.0
+scipy>=1.10.0
+TA-Lib>=0.4.25
+pandas-ta>=0.3.14b
 pytest>=7.4.0
-black>=23.7.0
-isort>=5.12.0
-mypy>=1.5.0
+pytest-mock>=3.11.0

@@ -1,0 +1,28 @@
+[
+  {
+    "method": "StoplossGuard",
+    "lookback_period_candles": 24,
+    "trade_limit": 2,
+    "stop_duration_candles": 24,
+    "only_per_pair": false
+  },
+  {
+    "method": "MaxDrawdown", 
+    "lookback_period_candles": 168,
+    "trade_limit": 2,
+    "max_allowed_drawdown": 0.05,
+    "stop_duration_candles": 72
+  },
+  {
+    "method": "CooldownPeriod",
+    "stop_duration_candles": 6,
+    "only_per_pair": true
+  },
+  {
+    "method": "LowProfitPairs",
+    "lookback_period_candles": 400,
+    "trade_limit": 1,
+    "stop_duration_candles": 24,
+    "required_profit": -0.02
+  }
+]
