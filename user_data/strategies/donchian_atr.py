@@ -27,41 +27,71 @@ logger = logging.getLogger(__name__)
 class DonchianATRTrend(IStrategy):
     """
     Trend-following breakout strategy using Donchian channels and ATR sizing
+    Optimized for 10-minute timeframe with faster signals
     """
     
     # Strategy interface version
     INTERFACE_VERSION = 3
     
     # Optimal timeframe for this strategy
-    timeframe = '1h'
+    timeframe = '5m'
     
     # Can this strategy go short?
     can_short = False
     
-    # Minimal ROI designed for the strategy (fallback only)
+    # Minimal ROI designed for 5m timeframe
     minimal_roi = {
-        "0": 0.03  # 3% ROI fallback
+        "0": 0.04,    # 4% profit target
+        "120": 0.02,  # 2% after 10 hours (120 * 5min candles)
+        "240": 0.01,  # 1% after 20 hours  
+        "360": 0.0    # Break even after 30 hours
     }
     
     # Optimal stoploss designed for the strategy (fallback - we use custom_stoploss)
     stoploss = -0.05
     
-    # Trailing stoploss
-    trailing_stop = False
+    # Trailing stoploss - enabled for 10m timeframe
+    trailing_stop = True
+    trailing_stop_positive = 0.02  # Start trailing at 2% profit
+    trailing_stop_positive_offset = 0.03  # Trail by 3%
+    trailing_only_offset_is_reached = True
+    
+    # Protections optimized for 5m timeframe
+    protections = [
+        {
+            "method": "StoplossGuard",
+            "lookback_period_candles": 288,  # 24 hours in 5m candles
+            "trade_limit": 4,
+            "stop_duration_candles": 72,    # 6 hours
+            "only_per_pair": False
+        },
+        {
+            "method": "MaxDrawdown",
+            "lookback_period_candles": 2016, # 1 week in 5m candles
+            "trade_limit": 4,
+            "max_allowed_drawdown": 0.05,
+            "stop_duration_candles": 288    # 24 hours
+        },
+        {
+            "method": "CooldownPeriod",
+            "stop_duration_candles": 6,     # 30 minutes
+            "only_per_pair": True
+        }
+    ]
     
     # Run "populate_indicators" only for new candle
     process_only_new_candles = True
     
     # Number of candles the strategy requires before producing valid signals
-    startup_candle_count: int = 250
+    startup_candle_count: int = 300  # Increased for 10m timeframe
     
-    # Strategy parameters
+    # Strategy parameters optimized for 10m timeframe
     buy_params = {
-        "don_len_entry": 20,
-        "don_len_exit": 10,
-        "ema_len": 200,
-        "atr_len": 14,
-        "atr_mult": 1.5,
+        "don_len_entry": 18,    # Slightly shorter for faster signals
+        "don_len_exit": 9,      # Faster exits
+        "ema_len": 200,         # Keep trend filter the same
+        "atr_len": 14,          # Standard ATR
+        "atr_mult": 1.5,        # Stop distance multiplier
     }
     
     sell_params = {
@@ -120,27 +150,54 @@ class DonchianATRTrend(IStrategy):
         Populate buy trend using Donchian breakout + EMA filter
         """
         
+        pair = metadata['pair']
+        
+        # Get latest values for debugging
+        if len(dataframe) > 0:
+            latest = dataframe.iloc[-1]
+            prev = dataframe.iloc[-2] if len(dataframe) > 1 else latest
+            
+            # Debug logging every few candles - simplified
+            if len(dataframe) % 12 == 0:  # Every hour (12 * 5min candles)
+                try:
+                    price = latest['close'] if pd.notna(latest['close']) else 0
+                    ema = latest['ema'] if pd.notna(latest['ema']) else 0
+                    logger.info(f"🔍 {pair} Analysis: Price: ${price:.2f} | EMA200: ${ema:.2f}")
+                except Exception as e:
+                    logger.info(f"🔍 {pair} Analysis error: {e}")
+        
         conditions = []
         
         # Primary condition: Close breaks above Donchian upper (entry)
-        conditions.append(dataframe['close'] > dataframe['don_upper_entry'].shift(1))
+        breakout_condition = dataframe['close'] > dataframe['don_upper_entry'].shift(1)
+        conditions.append(breakout_condition)
         
         # Trend filter: Price above EMA
-        conditions.append(dataframe['close'] > dataframe['ema'])
+        trend_condition = dataframe['close'] > dataframe['ema']
+        conditions.append(trend_condition)
         
         # Volume confirmation: Above average volume
-        conditions.append(dataframe['volume'] > dataframe['volume_sma'])
+        volume_condition = dataframe['volume'] > dataframe['volume_sma']
+        conditions.append(volume_condition)
         
         # RSI not overbought
-        conditions.append(dataframe['rsi'] < 75)
+        rsi_condition = dataframe['rsi'] < 75
+        conditions.append(rsi_condition)
         
         # MACD momentum confirmation
-        conditions.append(dataframe['macd'] > dataframe['macdsignal'])
+        macd_condition = dataframe['macd'] > dataframe['macdsignal']
+        conditions.append(macd_condition)
+        
+        # Check for actual signals
+        all_conditions = reduce(lambda x, y: x & y, conditions)
+        signal_count = all_conditions.sum()
+        
+        if signal_count > 0:
+            logger.info(f"🎯 BUY SIGNAL for {pair}! Conditions met: {signal_count}")
+            logger.info(f"   💰 Price: ${latest['close']:.2f} broke above Donchian: ${prev['don_upper_entry']:.2f}")
         
         if conditions:
-            dataframe.loc[
-                reduce(lambda x, y: x & y, conditions),
-                'enter_long'] = 1
+            dataframe.loc[all_conditions, 'enter_long'] = 1
         
         return dataframe
     
@@ -149,13 +206,17 @@ class DonchianATRTrend(IStrategy):
         Populate sell trend using Donchian mid-line cross
         """
         
+        pair = metadata['pair']
+        
         conditions = []
         
         # Primary exit: Close drops below Donchian mid (exit)
-        conditions.append(dataframe['close'] < dataframe['don_mid_exit'])
+        mid_exit_condition = dataframe['close'] < dataframe['don_mid_exit']
+        conditions.append(mid_exit_condition)
         
         # Alternative exit: RSI overbought
-        conditions.append(dataframe['rsi'] > 80)
+        rsi_exit_condition = dataframe['rsi'] > 80
+        conditions.append(rsi_exit_condition)
         
         # Alternative exit: MACD bearish cross
         macd_bear = (
@@ -164,10 +225,17 @@ class DonchianATRTrend(IStrategy):
         )
         conditions.append(macd_bear)
         
+        # Check for exit signals
+        any_exit = reduce(lambda x, y: x | y, conditions)
+        exit_count = any_exit.sum()
+        
+        if exit_count > 0:
+            latest = dataframe.iloc[-1]
+            logger.info(f"🚪 EXIT SIGNAL for {pair}! Exit conditions met: {exit_count}")
+            logger.info(f"   💸 Price: ${latest['close']:.2f} | RSI: {latest['rsi']:.1f}")
+        
         if conditions:
-            dataframe.loc[
-                reduce(lambda x, y: x | y, conditions),
-                'exit_long'] = 1
+            dataframe.loc[any_exit, 'exit_long'] = 1
         
         return dataframe
     

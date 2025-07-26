@@ -19,7 +19,7 @@
 
   "entry_pricing": {
     "price_side": "same",
-    "use_order_book": true,
+    "use_order_book": false,
     "order_book_top": 1,
     "price_last_balance": 0.0,
     "check_depth_of_market": {
@@ -30,7 +30,7 @@
 
   "exit_pricing": {
     "price_side": "same",
-    "use_order_book": true,
+    "use_order_book": false,
     "order_book_top": 1
   },
 
@@ -38,7 +38,6 @@
     "name": "coinbase",
     "key": "${CB_KEY}",
     "secret": "${CB_SECRET}",
-    "password": "${CB_PASSPHRASE}",
     "ccxt_config": {
       "enableRateLimit": true,
       "rateLimit": 100
@@ -62,28 +61,6 @@
   "edge": {
     "enabled": false
   },
-
-  "protections": [
-    {
-      "method": "StoplossGuard",
-      "lookback_period_candles": 24,
-      "trade_limit": 2,
-      "stop_duration_candles": 24,
-      "only_per_pair": false
-    },
-    {
-      "method": "MaxDrawdown",
-      "lookback_period_candles": 168,
-      "trade_limit": 2,
-      "max_allowed_drawdown": 0.05,
-      "stop_duration_candles": 72
-    },
-    {
-      "method": "CooldownPeriod",
-      "stop_duration_candles": 6,
-      "only_per_pair": true
-    }
-  ],
 
   "strategy": "DonchianATRTrend",
   "strategy_path": "user_data/strategies/",
@@ -153,7 +130,7 @@
     "listen_port": 8081,
     "verbosity": "error",
     "enable_openapi": false,
-    "jwt_secret_key": "somethingrandom-live",
+    "jwt_secret_key": "somethingrandom",
     "CORS_origins": [],
     "username": "freqtrade",
     "password": "freqtrade"

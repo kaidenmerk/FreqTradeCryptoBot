@@ -1,26 +1,27 @@
 {
   "trading_mode": "spot",
   "margin_mode": "",
-  "max_open_trades": 2,
+  "max_open_trades": 8,
   "stake_currency": "USD",
   "stake_amount": "unlimited",
   "tradable_balance_ratio": 0.99,
   "fiat_display_currency": "USD",
 
-  "dry_run": true,
-  "dry_run_wallet": 1000,
+  "dry_run": false,
   "cancel_open_orders_on_exit": true,
+  
+  "ignore_outdated_data": true,
 
   "unfilledtimeout": {
-    "entry": 60,
-    "exit": 60,
+    "entry": 30,
+    "exit": 30,
     "exit_timeout_count": 0,
     "unit": "minutes"
   },
 
   "entry_pricing": {
     "price_side": "same",
-    "use_order_book": true,
+    "use_order_book": false,
     "order_book_top": 1,
     "price_last_balance": 0.0,
     "check_depth_of_market": {
@@ -31,27 +32,38 @@
 
   "exit_pricing": {
     "price_side": "same",
-    "use_order_book": true,
+    "use_order_book": false,
     "order_book_top": 1
   },
 
   "exchange": {
+    "name": "alpaca",
+    "key": "PKZPW4OGB8L48YXQHI4A",
+    "secret": "zIsxFopw8rYeOmrGmX456W53goaHXbyc5LQ5rZRl",
+    "ccxt_config": {
+      "enableRateLimit": true,
+      "rateLimit": 500,
+      "sandbox": true,
+      "urls": {
+        "api": "https://paper-api.alpaca.markets"
+      }
+    },
+    "pair_whitelist": [
+      "BTC/USD", "ETH/USD", "ADA/USD", "AVAX/USD", "BAT/USD", "BCH/USD", 
+      "COMP/USD", "CRV/USD", "DOGE/USD", "DOT/USD", "ETC/USD", "FIL/USD",
+      "GRT/USD", "ICP/USD", "LINK/USD", "LTC/USD", "MATIC/USD", "MKR/USD",
+      "NEAR/USD", "SHIB/USD", "SOL/USD", "SUSHI/USD", "UNI/USD", "XLM/USD",
+      "XTZ/USD", "YFI/USD", "AAVE/USD", "ALGO/USD", "ATOM/USD"
+    ],
+    "pair_blacklist": []
+  },
+
+  "dataexchange": {
     "name": "coinbase",
-    "key": "${CB_KEY}",
-    "secret": "${CB_SECRET}",
-    "password": "${CB_PASSPHRASE}",
     "ccxt_config": {
       "enableRateLimit": true,
       "rateLimit": 100
-    },
-    "pair_whitelist": [
-      "BTC/USD",
-      "ETH/USD", 
-      "SOL/USD",
-      "MATIC/USD",
-      "AVAX/USD"
-    ],
-    "pair_blacklist": []
+    }
   },
 
   "pairlists": [
@@ -64,42 +76,25 @@
     "enabled": false
   },
 
-  "protections": [
-    {
-      "method": "StoplossGuard",
-      "lookback_period_candles": 24,
-      "trade_limit": 2,
-      "stop_duration_candles": 24,
-      "only_per_pair": false
-    },
-    {
-      "method": "MaxDrawdown",
-      "lookback_period_candles": 168,
-      "trade_limit": 2,
-      "max_allowed_drawdown": 0.05,
-      "stop_duration_candles": 72
-    },
-    {
-      "method": "CooldownPeriod",
-      "stop_duration_candles": 6,
-      "only_per_pair": true
-    }
-  ],
-
   "strategy": "DonchianATRTrend",
   "strategy_path": "user_data/strategies/",
-  "timeframe": "1h",
-  "timerange": "",
+  "timeframe": "5m",
 
   "process_only_new_candles": true,
   "minimal_roi": {
-    "0": 0.03
+    "0": 0.04,
+    "120": 0.02,
+    "240": 0.01,
+    "360": 0.0
   },
   "stoploss": -0.05,
-  "trailing_stop": false,
+  "trailing_stop": true,
+  "trailing_stop_positive": 0.02,
+  "trailing_stop_positive_offset": 0.03,
+  "trailing_only_offset_is_reached": true,
 
   "ignore_roi_if_entry_signal": false,
-  "ignore_buying_expired_candle_after": 300,
+  "ignore_buying_expired_candle_after": 600,
 
   "dataformat_ohlcv": "json",
   "dataformat_trades": "jsongz",
@@ -144,9 +139,22 @@
     "process_throttle_secs": 5
   },
 
-  "db_url": "sqlite:///user_data/trades.paper.sqlite",
+  "db_url": "sqlite:///user_data/trades.alpaca.paper.sqlite",
   "initial_state": "running",
   "force_entry_enable": false,
+
+  "discord": {
+    "enabled": true,
+    "webhook_url": "${DISCORD_WEBHOOK_URL}",
+    "entry": "on",
+    "entry_fill": "on", 
+    "exit": "on",
+    "exit_fill": "on",
+    "status": "on",
+    "startup": "on",
+    "buy_tag": "on",
+    "sell_reason": "on"
+  },
 
   "api_server": {
     "enabled": true,
@@ -160,6 +168,7 @@
     "password": "freqtrade"
   },
 
-  "bot_name": "freqtrade-paper",
-  "user_data_dir": "user_data"
+  "bot_name": "freqtrade-alpaca-paper",
+  "user_data_dir": "user_data",
+  "datadir": "user_data/data/coinbase"
 }
