@@ -36,17 +36,15 @@
     },
     
     "exchange": {
-        "name": "coinbase",
-        "key": "${CB_KEY}",
-        "secret": "${CB_SECRET}",
-        "password": "${CB_PASSPHRASE}",
-        "sandbox": false,
+        "name": "alpaca",
+        "key": "${ALPACA_KEY}",
+        "secret": "${ALPACA_SECRET}",
+        "sandbox": true,
         "ccxt_config": {
             "enableRateLimit": true,
             "rateLimit": 200,
-            "apiCredentials": {
-                "apiKey": "${CB_KEY}",
-                "privateKey": "${CB_SECRET}"
+            "urls": {
+                "api": "https://paper-api.alpaca.markets"
             }
         },
         "ccxt_async_config": {
@@ -55,11 +53,11 @@
             "aiohttp_trust_env": false
         },
         "pair_whitelist": [
-            "BTC/USD",
-            "ETH/USD",
-            "ADA/USD",
-            "DOT/USD",
-            "LINK/USD"
+            "AAPL/USD",
+            "TSLA/USD",
+            "SPY/USD",
+            "QQQ/USD",
+            "MSFT/USD"
         ],
         "pair_blacklist": []
     },
@@ -105,7 +103,7 @@
         "password": "SuperSecurePassword"
     },
     
-    "bot_name": "freqtrade-crypto-bot-paper",
+    "bot_name": "freqtrade-alpaca-paper",
     "initial_state": "running",
     "force_entry_enable": false,
     "internals": {

@@ -78,15 +78,15 @@ def main() -> None:
     parser.add_argument(
         "--exchange", 
         type=str, 
-        default="coinbasepro",
-        help="Exchange name (default: coinbasepro)"
+        default="alpaca",
+        help="Exchange name (default: alpaca, options: alpaca, coinbase)"
     )
     
     parser.add_argument(
         "--pairs", 
         nargs="+", 
-        default=["BTC/USD", "ETH/USD"],
-        help="Trading pairs to download (default: BTC/USD ETH/USD)"
+        default=["AAPL/USD", "TSLA/USD", "SPY/USD"],
+        help="Trading pairs to download (default: AAPL/USD TSLA/USD SPY/USD)"
     )
     
     parser.add_argument(

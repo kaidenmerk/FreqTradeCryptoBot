@@ -35,14 +35,18 @@
     },
     
     "exchange": {
-        "name": "coinbasepro",
+        "name": "coinbase",
         "key": "${CB_KEY}",
         "secret": "${CB_SECRET}",
         "password": "${CB_PASSPHRASE}",
         "sandbox": false,
         "ccxt_config": {
             "enableRateLimit": true,
-            "rateLimit": 200
+            "rateLimit": 200,
+            "apiCredentials": {
+                "apiKey": "${CB_KEY}",
+                "privateKey": "${CB_SECRET}"
+            }
         },
         "ccxt_async_config": {
             "enableRateLimit": true,
