@@ -186,6 +186,9 @@ balance:
 
 validate:
 	@echo "Validating strategy and configuration..."
+	$(PYTHON) scripts/validate_setup.py
+	@echo ""
+	@echo "Validating with Freqtrade..."
 	freqtrade list-strategies --config $(CONFIG_PAPER) --strategy $(STRATEGY)
 	freqtrade show-trades --config $(CONFIG_PAPER) --trade-ids 1 2>/dev/null || echo "No trades found (expected for new setup)"
 

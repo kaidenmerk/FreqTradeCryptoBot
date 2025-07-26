@@ -1,0 +1,26 @@
+[Unit]
+Description=Freqtrade Crypto Trading Bot
+After=network.target
+
+[Service]
+Type=simple
+User=freqtrade
+Group=freqtrade
+WorkingDirectory=/home/freqtrade/freqtrade-crypto-1.0
+Environment=PATH=/home/freqtrade/freqtrade-crypto-1.0/.venv/bin
+ExecStart=/home/freqtrade/freqtrade-crypto-1.0/.venv/bin/freqtrade trade --config user_data/config.live.json --strategy DonchianATRTrend
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=freqtrade
+
+# Security settings
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/home/freqtrade/freqtrade-crypto-1.0
+
+[Install]
+WantedBy=multi-user.target
